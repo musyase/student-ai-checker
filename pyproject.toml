@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "student-ai-checker"
+version = "0.1.0"
+description = "Local AI assistant for evidence-based review of student practical work"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Student AI Checker contributors" }]
+dependencies = [
+  "httpx>=0.27,<1",
+  "pydantic>=2.7,<3",
+  "python-docx>=1.1,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+]
+
+[project.scripts]
+student-ai-checker = "student_ai_checker.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/student_ai_checker"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+markers = [
+  "integration: tests that require a real external local service such as Ollama",
+]
