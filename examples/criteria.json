@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "criteria": [
+    {
+      "id": "android-studio-screenshot",
+      "title": "Скриншот Android Studio",
+      "description": "В отчёте присутствует скриншот открытой Android Studio, подтверждающий выполнение задания.",
+      "max_score": 2,
+      "allowed_scores": [0, 1, 2],
+      "evidence_requirements": [
+        {
+          "description": "Нужно визуально подтвердить, что на изображении открыта Android Studio.",
+          "kinds": ["image"],
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "problem-description",
+      "title": "Описание возникшей проблемы",
+      "description": "Студент описал возникшую при выполнении работы проблему и способ её решения.",
+      "max_score": 3,
+      "allowed_scores": [0, 1, 2, 3],
+      "evidence_requirements": [
+        {
+          "description": "Нужен текст из отчёта с описанием проблемы и решения.",
+          "kinds": ["paragraph", "table_cell"],
+          "required": true
+        }
+      ]
+    }
+  ]
+}
