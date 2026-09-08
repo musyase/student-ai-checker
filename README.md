@@ -13,10 +13,11 @@
 - ✅ Локальный HTTP-клиент Ollama без облачного fallback.
 - ✅ Текстовые, мультимодальные и structured-output запросы к Ollama API.
 - ✅ JSON Schema + Pydantic + дополнительная проверка criterion/evidence/score.
-- ✅ Одна ограниченная повторная попытка при некорректном ответе модели.
+- ✅ Одна ограниченная повторная попытка при некорректном ответе модели с передачей конкретной причины валидации.
 - ✅ Минимальный CLI для одной работы.
-- ✅ Unit-тесты и opt-in integration test для реального Ollama.
-- 🚧 Реальная проверка выбранной Qwen-модели на пользовательском Mac/Windows ещё должна быть выполнена локально.
+- ✅ Unit-тесты и opt-in integration tests для реального Ollama.
+- ✅ Реальная связка Windows → Ollama → `qwen3.5:4b` → structured multimodal result подтверждена локальным запуском 9 сентября 2026 года (Python 3.14.3; integration smoke test: `1 passed in 1.64s`).
+- 🧪 Полный CLI E2E `student.docx + criteria.json → result.json` добавлен как отдельный opt-in integration test и требует локального Ollama.
 - 🚧 SQLite, очередь группы, история, PySide6 и экспорт относятся к следующим этапам.
 - ❌ PDF пока не поддерживается.
 
@@ -175,25 +176,35 @@ student-ai-checker check \
 Обычные unit-тесты не требуют Ollama:
 
 ```bash
-pytest
+pytest -m "not integration"
 ```
 
-Реальный integration test специально не запускается по умолчанию, чтобы unit suite не маскировал отсутствие локальной модели:
+Реальные integration tests специально не запускаются по умолчанию, чтобы unit suite не маскировал отсутствие локальной модели:
 
 ### macOS / Linux
 
 ```bash
-STUDENT_AI_CHECKER_RUN_OLLAMA=1 pytest -m integration -v
+STUDENT_AI_CHECKER_RUN_OLLAMA=1 pytest -m integration -v -s
 ```
 
 ### Windows PowerShell
 
 ```powershell
 $env:STUDENT_AI_CHECKER_RUN_OLLAMA="1"
-pytest -m integration -v
+pytest -m integration -v -s
 ```
 
-Integration test использует настоящий локальный Ollama и проходит путь DOCX → extraction → изображение → structured multimodal request → validation. Никакой fake AI в production-коде нет.
+Integration suite использует настоящий локальный Ollama. Первый smoke test проходит путь DOCX → extraction → изображение → structured multimodal request → Pydantic/evidence validation. Второй E2E-тест запускает полный CLI в отдельном Python-процессе и проверяет создание `result.json`. Никакой fake AI в production-коде нет.
+
+### Подтверждённый локальный запуск
+
+9 сентября 2026 года на Windows был реально выполнен `tests/integration/test_ollama_real.py` с `qwen3.5:4b` через Ollama:
+
+```text
+1 passed in 1.64s
+```
+
+До этого реальный запуск обнаружил нарушение связки `status/manual_review_required`; строгая локальная валидация отказалась принимать такой ответ модели. После исправления repair-feedback повторный integration test прошёл. Этот случай сохранён как регрессионный unit-тест.
 
 ## Ограничения Этапа 1
 
@@ -203,4 +214,4 @@ Integration test использует настоящий локальный Olla
 - OLE и макросы не выполняются;
 - внешние изображения не скачиваются;
 - headers/footers, PDF, OCR, очередь группы, SQLite, экспорт и GUI пока не входят в этот технический шаг;
-- скорость и качество конкретной Qwen-модели ещё нельзя считать подтверждёнными без локального integration/evaluation набора реальных обезличенных работ.
+- один успешный smoke test подтверждает работоспособность интеграции, но **не подтверждает качество оценивания модели**; для этого позже нужен отдельный набор минимум из 10–20 обезличенных реальных студенческих работ и сравнение с ручной проверкой преподавателя.
