@@ -26,18 +26,73 @@ class CriterionStatus(str, Enum):
 
 
 class CriterionResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "description": (
+                "Result for one approved criterion. Cross-field rules are mandatory: "
+                "for insufficient_evidence or unable_to_check, proposed_score must be null, "
+                "manual_review_required must be true, and manual_review_reason must be a "
+                "non-empty string. For completed, partially_completed, or not_completed, "
+                "proposed_score must be a number."
+            )
+        },
+    )
 
-    criterion_id: str = Field(min_length=1)
-    title: str = Field(min_length=1)
-    max_score: float = Field(gt=0)
-    proposed_score: float | None = Field(default=None, ge=0)
-    status: CriterionStatus
-    explanation: str = Field(min_length=1)
-    evidence_ids: list[str] = Field(min_length=1)
-    student_feedback: str = ""
-    manual_review_required: bool = False
-    manual_review_reason: str | None = None
+    criterion_id: str = Field(
+        min_length=1,
+        description="Exact ID of the approved criterion; copy it without changes.",
+    )
+    title: str = Field(
+        min_length=1,
+        description="Exact title of the approved criterion; copy it without changes.",
+    )
+    max_score: float = Field(
+        gt=0,
+        description="Exact max_score of the approved criterion; do not change it.",
+    )
+    proposed_score: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Proposed criterion score. MUST be null when status is insufficient_evidence "
+            "or unable_to_check. MUST be numeric for completed, partially_completed, "
+            "or not_completed."
+        ),
+    )
+    status: CriterionStatus = Field(
+        description=(
+            "Criterion status. If insufficient_evidence or unable_to_check is selected, "
+            "manual_review_required MUST be true, proposed_score MUST be null, and "
+            "manual_review_reason MUST be non-empty."
+        )
+    )
+    explanation: str = Field(
+        min_length=1,
+        description="Short explanation grounded only in cited evidence_ids.",
+    )
+    evidence_ids: list[str] = Field(
+        min_length=1,
+        description="Only evidence IDs that exist in the supplied student document payload.",
+    )
+    student_feedback: str = Field(
+        default="",
+        description="Concise feedback for the student; do not invent unsupported facts.",
+    )
+    manual_review_required: bool = Field(
+        default=False,
+        description=(
+            "MUST be true for insufficient_evidence or unable_to_check. May also be true "
+            "for another status when a teacher should verify a material uncertainty."
+        ),
+    )
+    manual_review_reason: str | None = Field(
+        default=None,
+        description=(
+            "MUST be a non-empty reason whenever manual_review_required is true; otherwise "
+            "it may be null."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_manual_review_fields(self) -> "CriterionResult":
