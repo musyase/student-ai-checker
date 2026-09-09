@@ -20,6 +20,7 @@ from student_ai_checker.documents.template import compare_template
 from student_ai_checker.grading.approval import criteria_digest, verify_approval
 from student_ai_checker.grading.template_checker import TemplateWorkChecker
 from student_ai_checker.grading.per_criterion import PerCriterionChecker
+from student_ai_checker.grading.visual_review import VisualReviewChecker
 
 LOGGER = logging.getLogger("student_ai_checker")
 
@@ -34,7 +35,9 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--output", type=Path, default=Path("result.json"))
     check.add_argument("--template", type=Path, help="Чистый исходный DOCX-бланк")
     check.add_argument("--approval", type=Path, help="Запись утверждения критериев и бланка")
-    check.add_argument("--per-criterion", action="store_true", help="Экспериментально: проверять по одному критерию, последовательно")
+    modes = check.add_mutually_exclusive_group()
+    modes.add_argument("--visual-review", action="store_true", help="Отдельный анализ каждого изображения перед оцениванием критерия")
+    modes.add_argument("--per-criterion", action="store_true", help="Экспериментально: проверять по одному критерию, последовательно")
     check.add_argument("--model", help="Имя локальной модели Ollama")
     check.add_argument("--ollama-url", help="URL локального Ollama")
     status = subcommands.add_parser("ollama-status", help="Проверить Ollama и модель")
@@ -103,9 +106,13 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
     model = args.model or settings.ollama_model
     base_url = args.ollama_url or settings.ollama_base_url
     LOGGER.info("Extracted %s evidence items (%s images) from %s", len(document.evidence), len(document.images), document.source_name)
+    visual_checker = None
     with OllamaClient(base_url=base_url, model=model, timeout_seconds=settings.ollama_timeout_seconds, num_ctx=settings.ollama_num_ctx) as ollama:
         checker = TemplateWorkChecker(ollama, comparison) if comparison else StudentWorkChecker(ollama)
-        if args.per_criterion:
+        if args.visual_review:
+            visual_checker = VisualReviewChecker(ollama, comparison)
+            response = visual_checker.check(document, criteria)
+        elif args.per_criterion:
             LOGGER.info("Режим: по одному критерию; все допустимые доказательства сохраняются.")
             response = PerCriterionChecker(checker).check(document, criteria)
         else:
@@ -113,8 +120,13 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
     output = _resolved_output(document=document, criteria=criteria, response=response, model=model)
     output["inference_options"] = {
         "num_ctx": settings.ollama_num_ctx,
-        "criterion_mode": "per_criterion" if args.per_criterion else "all_at_once",
+        "criterion_mode": "visual_review" if args.visual_review else ("per_criterion" if args.per_criterion else "all_at_once"),
     }
+    if visual_checker is not None:
+        output["visual_review"] = {
+            "pipeline_version": 1, "model_output_is_untrusted": True,
+            "criteria": visual_checker.audit,
+        }
     output["criteria_sha256"] = criteria_digest(criteria)
     output["approval"] = approval.model_dump(mode="json") if approval else None
     output["template_comparison"] = comparison.report() if comparison else None
