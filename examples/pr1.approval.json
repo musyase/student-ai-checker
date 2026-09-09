@@ -1,0 +1,10 @@
+{
+  "status": "approved",
+  "approved_at": "2026-09-09T19:15:26Z",
+  "approved_by": "teacher",
+  "digest_format": "criteria-model-json-v1",
+  "criteria_version": 1,
+  "criteria_sha256": "51f1bf969fb0777ec9717d27ecb39936fc62b69b9d5c50f094646e971c5977d6",
+  "template_sha256": "c2193a2dccad9fbd04837e3f5a899cf07999b1734cc1dcaf4166779a7bd89956",
+  "grade_scale": null
+}
