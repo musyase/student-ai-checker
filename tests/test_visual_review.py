@@ -56,7 +56,7 @@ def criterion(name='visual', kinds=None):
 
 
 def finding(**changes):
-    data={'relevance':'relevant','readability':'readable','description':'MODEL-OBSERVATION',
+    data={'relevance':'relevant','visual_access':'clear','description':'MODEL-OBSERVATION',
           'visible_text':[], 'observations':['A visible feature'], 'uncertainties':[]}
     data.update(changes); return data
 
@@ -143,7 +143,7 @@ def test_each_visual_criterion_gets_independent_original_images(source):
 
 
 @pytest.mark.parametrize('reply',[
-    '{}','not json',finding(relevance='absent'),finding(readability='yes'),
+    '{}','not json',finding(relevance='absent'),finding(visual_access='yes'),
     finding(visible_text='text'),finding(uncertainties=None),finding(grade=5),
     finding(evidence_id='FORGED'),finding(description=''),
 ])
@@ -201,10 +201,10 @@ def test_synthesis_repairs_to_valid_result(source):
 
 
 @pytest.mark.parametrize('change',[
-    {'readability':'unreadable', 'uncertainties':[{'detail':'Required text is unreadable', 'impact':'blocking'}]},
-    {'readability':'partly_readable', 'uncertainties':[{'detail':'Required label is cropped', 'impact':'blocking'}]},
-    {'relevance':'uncertain', 'uncertainties':[{'detail':'Cannot identify the required object', 'impact':'blocking'}]},
-    {'uncertainties':[{'detail':'Important text is unreadable', 'impact':'blocking'}]},
+    {'visual_access':'unavailable', 'uncertainties':[{'detail':'Required text is unavailable', 'cause':'Characters cannot be separated at this image resolution.', 'impact':'blocking'}]},
+    {'visual_access':'limited', 'uncertainties':[{'detail':'Required label is cropped', 'cause':'The right-hand part of the label lies outside the frame.', 'impact':'blocking'}]},
+    {'relevance':'uncertain', 'uncertainties':[{'detail':'Cannot identify the required object', 'cause':'An overlay covers the distinguishing part of the object.', 'impact':'blocking'}]},
+    {'uncertainties':[{'detail':'Important text is unavailable', 'cause':'Motion blur merges the required characters.', 'impact':'blocking'}]},
     {'relevance':'not_relevant'},
 ])
 def test_unsupported_visual_positive_is_guarded(source,change):
@@ -217,7 +217,7 @@ def test_unsupported_visual_positive_is_guarded(source,change):
 
 
 def test_unclear_other_image_cannot_be_ignored_to_give_zero(source):
-    c=criterion();client,http,calls=transport([finding(relevance='uncertain', uncertainties=[{'detail':'Cannot identify the object', 'impact':'blocking'}]),finding(relevance='not_relevant'),
+    c=criterion();client,http,calls=transport([finding(relevance='uncertain', uncertainties=[{'detail':'Cannot identify the object', 'cause':'An opaque overlay covers the relevant image region.', 'impact':'blocking'}]),finding(relevance='not_relevant'),
                                             answer(c,['DOC1:META:0001'],score=0,status='not_completed')])
     with http:out=VisualReviewChecker(client,source[3]).check(source[2],CriteriaSet(criteria=[c]))
     assert out.results[0].proposed_score is None
