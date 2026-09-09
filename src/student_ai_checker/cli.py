@@ -101,10 +101,11 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
     model = args.model or settings.ollama_model
     base_url = args.ollama_url or settings.ollama_base_url
     LOGGER.info("Extracted %s evidence items (%s images) from %s", len(document.evidence), len(document.images), document.source_name)
-    with OllamaClient(base_url=base_url, model=model, timeout_seconds=settings.ollama_timeout_seconds) as ollama:
+    with OllamaClient(base_url=base_url, model=model, timeout_seconds=settings.ollama_timeout_seconds, num_ctx=settings.ollama_num_ctx) as ollama:
         checker = TemplateWorkChecker(ollama, comparison) if comparison else StudentWorkChecker(ollama)
         response = checker.check(document, criteria)
     output = _resolved_output(document=document, criteria=criteria, response=response, model=model)
+    output["inference_options"] = {"num_ctx": settings.ollama_num_ctx}
     output["criteria_sha256"] = criteria_digest(criteria)
     output["approval"] = approval.model_dump(mode="json") if approval else None
     output["template_comparison"] = comparison.report() if comparison else None
@@ -133,7 +134,7 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
 def _run_ollama_status(args: argparse.Namespace, settings: Settings) -> int:
     model = args.model or settings.ollama_model
     base_url = args.ollama_url or settings.ollama_base_url
-    with OllamaClient(base_url=base_url, model=model, timeout_seconds=settings.ollama_timeout_seconds) as ollama:
+    with OllamaClient(base_url=base_url, model=model, timeout_seconds=settings.ollama_timeout_seconds, num_ctx=settings.ollama_num_ctx) as ollama:
         models = ollama.list_models()
         print(f"Ollama доступен: {base_url}")
         if model in models:
@@ -148,8 +149,8 @@ def _run_ollama_status(args: argparse.Namespace, settings: Settings) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(levelname)s: %(message)s")
-    settings = Settings.from_env()
     try:
+        settings = Settings.from_env()
         if args.command == "check":
             return _run_check(args, settings)
         if args.command == "ollama-status":

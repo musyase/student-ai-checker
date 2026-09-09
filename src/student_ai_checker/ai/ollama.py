@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from student_ai_checker.config import DEFAULT_OLLAMA_NUM_CTX, validate_num_ctx
 from student_ai_checker.exceptions import OllamaModelMissingError, OllamaResponseError, OllamaUnavailableError
 
 
@@ -63,7 +64,8 @@ def _http_failure(response: httpx.Response) -> str:
 class OllamaClient:
     """Local Ollama adapter with no cloud fallback."""
 
-    def __init__(self, *, base_url: str, model: str, timeout_seconds: float = 300.0, client: httpx.Client | None = None) -> None:
+    def __init__(self, *, base_url: str, model: str, timeout_seconds: float = 300.0, client: httpx.Client | None = None, num_ctx: int = DEFAULT_OLLAMA_NUM_CTX) -> None:
+        self.num_ctx = validate_num_ctx(num_ctx)
         self.base_url = base_url.rstrip("/")
         self.model = model
         self._owns_client = client is None
@@ -120,13 +122,13 @@ class OllamaClient:
         user_message: dict[str, Any] = {"role": "user", "content": user_prompt}
         if images:
             user_message["images"] = [base64.b64encode(image).decode("ascii") for image in images]
-        payload: dict[str, Any] = {"model": self.model, "stream": False, "messages": [{"role": "system", "content": system_prompt}, user_message], "options": {"temperature": 0}, "think": False}
+        payload: dict[str, Any] = {"model": self.model, "stream": False, "messages": [{"role": "system", "content": system_prompt}, user_message], "options": {"temperature": 0, "num_ctx": self.num_ctx}, "think": False}
         if schema is not None:
             payload["format"] = dict(schema)
         LOGGER.info(
-            "Ollama request: images=%d, image_bytes=%d, text_chars=%d, structured=%s",
+            "Ollama request: images=%d, image_bytes=%d, text_chars=%d, structured=%s, num_ctx=%d",
             len(images), sum(len(image) for image in images),
-            len(system_prompt) + len(user_prompt), schema is not None,
+            len(system_prompt) + len(user_prompt), schema is not None, self.num_ctx,
         )
         try:
             response = self._client.post(f"{self.base_url}/api/chat", json=payload)
@@ -145,6 +147,11 @@ class OllamaClient:
         if "error" in body:
             raise OllamaResponseError(
                 f"Ollama сообщил об ошибке: {_error_detail(response)}; автоматическая оценка не выполнялась."
+            )
+        if body.get("done") is False or body.get("done_reason") == "length":
+            raise OllamaResponseError(
+                "Ollama не завершил ответ или остановился по лимиту длины; "
+                "неполный результат не принимается, нужна ручная проверка."
             )
         message = body.get("message")
         if not isinstance(message, dict):

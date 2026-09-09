@@ -30,7 +30,7 @@ def test_real_docx_to_ollama_structured_result(tmp_path: Path) -> None:
     criteria = CriteriaSet(criteria=[Criterion(id="image-present", title="Приложено изображение", description="В отчёте есть встроенное изображение.", max_score=1, allowed_scores=[0, 1], evidence_requirements=[EvidenceRequirement(description="Встроенное изображение", kinds=["image"])])])
     extracted = DocxExtractor().extract(source)
     settings = Settings.from_env()
-    with OllamaClient(base_url=settings.ollama_base_url, model=settings.ollama_model, timeout_seconds=settings.ollama_timeout_seconds) as ollama:
+    with OllamaClient(base_url=settings.ollama_base_url, model=settings.ollama_model, timeout_seconds=settings.ollama_timeout_seconds, num_ctx=settings.ollama_num_ctx) as ollama:
         result = StudentWorkChecker(ollama).check(extracted, criteria)
     assert result.results[0].criterion_id == "image-present"
     assert set(result.results[0].evidence_ids) <= extracted.evidence_ids
