@@ -3,12 +3,61 @@
 from __future__ import annotations
 
 import base64
+import logging
+import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 import httpx
 
 from student_ai_checker.exceptions import OllamaModelMissingError, OllamaResponseError, OllamaUnavailableError
+
+
+LOGGER = logging.getLogger(__name__)
+MAX_ERROR_DETAIL_CHARS = 600
+MAX_ERROR_BODY_BYTES = 16_384
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_LONG_ENCODED_DATA = re.compile(r"[A-Za-z0-9+/=_-]{100,}")
+
+
+def _error_detail(response: httpx.Response) -> str:
+    """Read only the provider's bounded error field, never dump request/response JSON.
+
+    The value is untrusted diagnostic text, not a grading result or a prompt.
+    An unknown/HTML response is deliberately not printed in full.
+    """
+    missing = "сервер не вернул читаемое поле error; тело ответа не выводится"
+    if len(response.content) > MAX_ERROR_BODY_BYTES:
+        return "слишком большое сообщение error; тело ответа не выводится"
+    try:
+        body = response.json()
+    except ValueError:
+        return missing
+    if not isinstance(body, dict):
+        return missing
+    detail = body.get("error")
+    if isinstance(detail, dict):
+        detail = detail.get("message")
+    if not isinstance(detail, str) or not detail.strip():
+        return missing
+    detail = _ANSI_ESCAPE.sub("", detail)
+    detail = "".join(" " if unicodedata.category(char).startswith("C") else char for char in detail)
+    detail = _LONG_ENCODED_DATA.sub("[длинные закодированные данные скрыты]", detail)
+    detail = " ".join(detail.split())
+    if not detail:
+        return missing
+    if len(detail) > MAX_ERROR_DETAIL_CHARS:
+        detail = detail[:MAX_ERROR_DETAIL_CHARS] + "…"
+    return detail
+
+
+def _http_failure(response: httpx.Response) -> str:
+    return (
+        f"Ollama вернул HTTP {response.status_code}; "
+        f"причина Ollama: {_error_detail(response)}; "
+        "автоматическая оценка не выполнялась."
+    )
 
 
 class OllamaClient:
@@ -35,10 +84,16 @@ class OllamaClient:
             response = self._client.get(f"{self.base_url}/api/tags")
             response.raise_for_status()
             payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            raise OllamaUnavailableError(_http_failure(exc.response)) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise OllamaUnavailableError("Не удалось подключиться к локальному Ollama. Проверьте, что Ollama запущен.") from exc
+        if not isinstance(payload, dict) or "error" in payload or not isinstance(payload.get("models"), list):
+            raise OllamaUnavailableError("Ollama вернул некорректный список моделей.")
         models: list[str] = []
-        for item in payload.get("models", []):
+        for item in payload["models"]:
+            if not isinstance(item, dict):
+                raise OllamaUnavailableError("Ollama вернул некорректный список моделей.")
             name = item.get("name") or item.get("model")
             if isinstance(name, str):
                 models.append(name)
@@ -68,6 +123,11 @@ class OllamaClient:
         payload: dict[str, Any] = {"model": self.model, "stream": False, "messages": [{"role": "system", "content": system_prompt}, user_message], "options": {"temperature": 0}, "think": False}
         if schema is not None:
             payload["format"] = dict(schema)
+        LOGGER.info(
+            "Ollama request: images=%d, image_bytes=%d, text_chars=%d, structured=%s",
+            len(images), sum(len(image) for image in images),
+            len(system_prompt) + len(user_prompt), schema is not None,
+        )
         try:
             response = self._client.post(f"{self.base_url}/api/chat", json=payload)
             response.raise_for_status()
@@ -77,10 +137,19 @@ class OllamaClient:
         except httpx.TimeoutException as exc:
             raise OllamaUnavailableError("Ollama не ответил вовремя; автоматическая оценка не выполнялась.") from exc
         except httpx.HTTPStatusError as exc:
-            raise OllamaResponseError(f"Ollama вернул HTTP {exc.response.status_code}; автоматическая оценка не выполнялась.") from exc
+            raise OllamaResponseError(_http_failure(exc.response)) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise OllamaResponseError("Не удалось прочитать ответ Ollama; автоматическая оценка не выполнялась.") from exc
-        content = body.get("message", {}).get("content")
+        if not isinstance(body, dict):
+            raise OllamaResponseError("Ollama вернул некорректную структуру ответа; автоматическая оценка не выполнялась.")
+        if "error" in body:
+            raise OllamaResponseError(
+                f"Ollama сообщил об ошибке: {_error_detail(response)}; автоматическая оценка не выполнялась."
+            )
+        message = body.get("message")
+        if not isinstance(message, dict):
+            raise OllamaResponseError("Ollama вернул некорректную структуру сообщения; автоматическая оценка не выполнялась.")
+        content = message.get("content")
         if not isinstance(content, str) or not content.strip():
             raise OllamaResponseError("Ollama вернул пустой ответ.")
         return content.strip()
