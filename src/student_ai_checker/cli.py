@@ -20,7 +20,7 @@ from student_ai_checker.documents.template import compare_template
 from student_ai_checker.grading.approval import criteria_digest, verify_approval
 from student_ai_checker.grading.template_checker import TemplateWorkChecker
 from student_ai_checker.grading.per_criterion import PerCriterionChecker
-from student_ai_checker.grading.visual_review import VisualReviewChecker
+from student_ai_checker.grading.visual_review import VISUAL_PIPELINE_VERSION, VisualReviewChecker
 
 LOGGER = logging.getLogger("student_ai_checker")
 
@@ -124,7 +124,7 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
     }
     if visual_checker is not None:
         output["visual_review"] = {
-            "pipeline_version": 1, "model_output_is_untrusted": True,
+            "pipeline_version": VISUAL_PIPELINE_VERSION, "model_output_is_untrusted": True,
             "criteria": visual_checker.audit,
         }
     output["criteria_sha256"] = criteria_digest(criteria)

@@ -105,7 +105,7 @@ def test_isolated_images_then_synthesis_and_audit(source,caplog):
     last=sent[2]; assert 'images' not in last['messages'][1]
     payload=json.loads(last['messages'][1]['content'])
     assert len(payload['image_inventory'])==2
-    assert [r['evidence_id'] for r in payload['image_reviews_untrusted']]==[i.id for i in doc.images]
+    assert [r['evidence_id'] for r in payload['image_reviews']]==[i.id for i in doc.images]
     assert 'PRIVATE-STUDENT' in str(payload) and 'PRIVATE-TABLE' in str(payload)
     assert 'TEMPLATE-ONLY' not in str(payload)
     assert out.results[0].proposed_score==2
@@ -120,7 +120,7 @@ def test_text_criterion_does_not_consult_images(source):
     with http:
         checker=VisualReviewChecker(client,source[3]);out=checker.check(source[2],CriteriaSet(criteria=[c]))
     assert len(posts(calls))==1; payload=json.loads(posts(calls)[0]['messages'][1]['content'])
-    assert payload['image_inventory']==[] and payload['image_reviews_untrusted']==[]
+    assert payload['image_inventory']==[] and payload['image_reviews']==[]
     assert out.results[0].proposed_score==2 and checker.audit[0]['image_reviews']==[]
 
 
@@ -201,8 +201,10 @@ def test_synthesis_repairs_to_valid_result(source):
 
 
 @pytest.mark.parametrize('change',[
-    {'readability':'unreadable'}, {'readability':'partly_readable'},
-    {'relevance':'uncertain'}, {'uncertainties':['Important text is unreadable']},
+    {'readability':'unreadable', 'uncertainties':[{'detail':'Required text is unreadable', 'impact':'blocking'}]},
+    {'readability':'partly_readable', 'uncertainties':[{'detail':'Required label is cropped', 'impact':'blocking'}]},
+    {'relevance':'uncertain', 'uncertainties':[{'detail':'Cannot identify the required object', 'impact':'blocking'}]},
+    {'uncertainties':[{'detail':'Important text is unreadable', 'impact':'blocking'}]},
     {'relevance':'not_relevant'},
 ])
 def test_unsupported_visual_positive_is_guarded(source,change):
@@ -215,7 +217,7 @@ def test_unsupported_visual_positive_is_guarded(source,change):
 
 
 def test_unclear_other_image_cannot_be_ignored_to_give_zero(source):
-    c=criterion();client,http,calls=transport([finding(relevance='uncertain'),finding(relevance='not_relevant'),
+    c=criterion();client,http,calls=transport([finding(relevance='uncertain', uncertainties=[{'detail':'Cannot identify the object', 'impact':'blocking'}]),finding(relevance='not_relevant'),
                                             answer(c,['DOC1:META:0001'],score=0,status='not_completed')])
     with http:out=VisualReviewChecker(client,source[3]).check(source[2],CriteriaSet(criteria=[c]))
     assert out.results[0].proposed_score is None
@@ -315,7 +317,7 @@ def test_untrusted_findings_do_not_become_instructions(source):
     synthesis=posts(calls)[-1]
     assert injected not in synthesis['messages'][0]['content']
     assert injected in synthesis['messages'][1]['content']
-    assert 'image_reviews_untrusted' in synthesis['messages'][1]['content']
+    assert 'image_reviews' in synthesis['messages'][1]['content']
     assert out.results[0].proposed_score==2
 
 
