@@ -19,6 +19,7 @@ from student_ai_checker.models import CriteriaSet, GradingResponse
 from student_ai_checker.documents.template import compare_template
 from student_ai_checker.grading.approval import criteria_digest, verify_approval
 from student_ai_checker.grading.template_checker import TemplateWorkChecker
+from student_ai_checker.grading.per_criterion import PerCriterionChecker
 
 LOGGER = logging.getLogger("student_ai_checker")
 
@@ -33,6 +34,7 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--output", type=Path, default=Path("result.json"))
     check.add_argument("--template", type=Path, help="Чистый исходный DOCX-бланк")
     check.add_argument("--approval", type=Path, help="Запись утверждения критериев и бланка")
+    check.add_argument("--per-criterion", action="store_true", help="Экспериментально: проверять по одному критерию, последовательно")
     check.add_argument("--model", help="Имя локальной модели Ollama")
     check.add_argument("--ollama-url", help="URL локального Ollama")
     status = subcommands.add_parser("ollama-status", help="Проверить Ollama и модель")
@@ -103,9 +105,16 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
     LOGGER.info("Extracted %s evidence items (%s images) from %s", len(document.evidence), len(document.images), document.source_name)
     with OllamaClient(base_url=base_url, model=model, timeout_seconds=settings.ollama_timeout_seconds, num_ctx=settings.ollama_num_ctx) as ollama:
         checker = TemplateWorkChecker(ollama, comparison) if comparison else StudentWorkChecker(ollama)
-        response = checker.check(document, criteria)
+        if args.per_criterion:
+            LOGGER.info("Режим: по одному критерию; все допустимые доказательства сохраняются.")
+            response = PerCriterionChecker(checker).check(document, criteria)
+        else:
+            response = checker.check(document, criteria)
     output = _resolved_output(document=document, criteria=criteria, response=response, model=model)
-    output["inference_options"] = {"num_ctx": settings.ollama_num_ctx}
+    output["inference_options"] = {
+        "num_ctx": settings.ollama_num_ctx,
+        "criterion_mode": "per_criterion" if args.per_criterion else "all_at_once",
+    }
     output["criteria_sha256"] = criteria_digest(criteria)
     output["approval"] = approval.model_dump(mode="json") if approval else None
     output["template_comparison"] = comparison.report() if comparison else None
