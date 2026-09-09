@@ -15,7 +15,10 @@ from student_ai_checker.config import Settings
 from student_ai_checker.documents import DocxExtractor
 from student_ai_checker.exceptions import StudentAICheckerError
 from student_ai_checker.grading import StudentWorkChecker
-from student_ai_checker.models import CriteriaSet
+from student_ai_checker.models import CriteriaSet, GradingResponse
+from student_ai_checker.documents.template import compare_template
+from student_ai_checker.grading.approval import criteria_digest, verify_approval
+from student_ai_checker.grading.template_checker import TemplateWorkChecker
 
 LOGGER = logging.getLogger("student_ai_checker")
 
@@ -28,6 +31,8 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--document", required=True, type=Path)
     check.add_argument("--criteria", required=True, type=Path)
     check.add_argument("--output", type=Path, default=Path("result.json"))
+    check.add_argument("--template", type=Path, help="Чистый исходный DOCX-бланк")
+    check.add_argument("--approval", type=Path, help="Запись утверждения критериев и бланка")
     check.add_argument("--model", help="Имя локальной модели Ollama")
     check.add_argument("--ollama-url", help="URL локального Ollama")
     status = subcommands.add_parser("ollama-status", help="Проверить Ollama и модель")
@@ -38,7 +43,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _load_criteria(path: Path) -> CriteriaSet:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except OSError as exc:
         raise StudentAICheckerError(f"Не удалось прочитать критерии: {path}") from exc
     except json.JSONDecodeError as exc:
@@ -60,24 +65,68 @@ def _resolved_output(*, document, criteria, response, model: str) -> dict[str, o
     return {"schema_version": 1, "document": {"source_name": document.source_name, "source_sha256": document.source_sha256}, "criteria_version": criteria.version, "model": model, "results": results, "resolved_evidence": evidence, "extraction_issues": [issue.model_dump(mode="json") for issue in document.issues]}
 
 
+def _score_summary(criteria: CriteriaSet, response: GradingResponse) -> dict[str, object]:
+    from decimal import Decimal
+
+    scores = [r.proposed_score for r in response.results if r.proposed_score is not None]
+    points = float(sum((Decimal(str(score)) for score in scores), Decimal(0)))
+    complete = len(scores) == len(criteria.criteria)
+    return {
+        "max_score": float(sum(Decimal(str(c.max_score)) for c in criteria.criteria)),
+        "scored_points": points,
+        "proposed_total": points if complete else None,
+        "unresolved_count": len(criteria.criteria) - len(scores),
+        "manual_review_required": any(r.manual_review_required for r in response.results),
+        "teacher_confirmed": False,
+        "grade": None,
+    }
+
+
 def _run_check(args: argparse.Namespace, settings: Settings) -> int:
+    if args.output.exists():
+        raise StudentAICheckerError("Файл результата уже существует. Укажите новое имя --output: предыдущая проверка сохранена.")
+    if bool(args.template) != bool(args.approval):
+        raise StudentAICheckerError("Для проверки по бланку укажите вместе --template и --approval.")
     criteria = _load_criteria(args.criteria)
     document = DocxExtractor().extract(args.document)
+    comparison = None
+    approval = None
+    if args.template:
+        template = DocxExtractor().extract(args.template)
+        approval = verify_approval(args.approval, criteria=criteria, template_sha256=template.source_sha256)
+        comparison = compare_template(document, template)
+        LOGGER.info("Template comparison: %s", comparison.report()["counts"])
+    else:
+        LOGGER.warning("Без бланка и записи утверждения: технический режим, результат не подтверждён преподавателем.")
     model = args.model or settings.ollama_model
     base_url = args.ollama_url or settings.ollama_base_url
     LOGGER.info("Extracted %s evidence items (%s images) from %s", len(document.evidence), len(document.images), document.source_name)
     with OllamaClient(base_url=base_url, model=model, timeout_seconds=settings.ollama_timeout_seconds) as ollama:
-        response = StudentWorkChecker(ollama).check(document, criteria)
+        checker = TemplateWorkChecker(ollama, comparison) if comparison else StudentWorkChecker(ollama)
+        response = checker.check(document, criteria)
     output = _resolved_output(document=document, criteria=criteria, response=response, model=model)
+    output["criteria_sha256"] = criteria_digest(criteria)
+    output["approval"] = approval.model_dump(mode="json") if approval else None
+    output["template_comparison"] = comparison.report() if comparison else None
+    output["summary"] = _score_summary(criteria, response)
     try:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+        # Exclusive creation also protects against a file appearing during inference.
+        with args.output.open("x", encoding="utf-8") as stream:
+            json.dump(output, stream, ensure_ascii=False, indent=2, allow_nan=False)
     except OSError as exc:
         raise StudentAICheckerError(f"Проверка выполнена, но не удалось записать результат: {args.output}") from exc
     print(f"Результат сохранён: {args.output}")
     for result in response.results:
         score = "—" if result.proposed_score is None else str(result.proposed_score)
         print(f"[{result.status.label_ru}] {result.title}: {score}/{result.max_score}")
+    summary = output["summary"]
+    total = summary["proposed_total"]
+    if total is None:
+        print(f"Итог не завершён. Баллы по проверенным критериям: {summary['scored_points']}; есть критерии без балла.")
+    else:
+        print(f"Предварительная сумма: {total}/{summary['max_score']}.")
+    print("Оценка 2–5 не назначена. Результат требует подтверждения преподавателем.")
     return 0
 
 
