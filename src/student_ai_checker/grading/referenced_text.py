@@ -19,6 +19,11 @@ from .checked_text import (
     _result, calculate_components,
 )
 
+from .evaluation_context import (
+    EVALUATION_CONTEXT_VERSION, EvaluationContextError, compile_evaluation_checks,
+)
+
+REFERENCE_PROMPT_VERSION = 2
 REFERENCE_CONTRACT_VERSION = 1
 MAX_FRAGMENT_CHARS = 6000  # Same bound as the existing local TextQuote validator.
 MAX_REFERENCES = 2048  # Reject oversized catalogs; never silently drop content.
@@ -89,6 +94,9 @@ class ReferenceResponse(BaseModel):
 
 REFERENCE_SYSTEM = """Проверь перечисленные пункты одного утверждённого критерия.
 Не назначай баллы и не добавляй требования: сумму вычисляет программа.
+В FIXED_CHECKS requirement — полное условие выполнения, source_fragment — его
+исходный фрагмент. operation и rubric_fragments сохраняют действие и оговорки
+родительского критерия. Не превращай название проблемы в требование создать её.
 source_catalog содержит настоящие абзацы/ячейки после сравнения с чистым бланком.
 Каждый ref_id указывает на точный текст. Длинный источник разделён на последовательные
 части: просмотри их все и не делай вывод об отсутствии по одной части.
@@ -193,17 +201,23 @@ def check_text_references(client: StructuredClient, criterion: Criterion,
             raise GradingValidationError("invalid_fixed_checks")
         if sum(p.points for p in parts) != criterion.max_score:
             raise GradingValidationError("fixed_points_mismatch")
-    except GradingValidationError as exc:
+        evaluation_checks = compile_evaluation_checks(
+            criterion.id, criterion.description,
+            [(p.id, p.requirement, p.points) for p in parts],
+        )
+    except (GradingValidationError, EvaluationContextError) as exc:
         audit["error_code"] = str(exc)
         return _result(criterion, None, "Не подтверждена целостность источников или пунктов; нужна ручная проверка.", [], error=True), audit
+    audit["reference_prompt_version"] = REFERENCE_PROMPT_VERSION
+    audit["evaluation_context_version"] = EVALUATION_CONTEXT_VERSION
+    audit["evaluation_checks"] = evaluation_checks
+    audit["evaluation_checks_sha256"] = _digest(evaluation_checks)
     audit["source_catalog"] = [r.payload() for r in refs]
     audit["source_catalog_sha256"] = _digest(audit["source_catalog"])
     schema = references_schema(parts, refs)
     audit["generation_schema_sha256"] = _digest(schema)
     system = (REFERENCE_SYSTEM + "\nAPPROVED_CRITERION:\n" + criterion.model_dump_json()
-              + "\nFIXED_CHECKS:\n" + json.dumps([
-                  {"check_id": p.id, "requirement": p.requirement} for p in parts
-              ], ensure_ascii=False))
+              + "\nFIXED_CHECKS:\n" + json.dumps(evaluation_checks, ensure_ascii=False))
     audit["system_prompt_sha256"] = hashlib.sha256(system.encode("utf-8")).hexdigest()
     base = json.dumps({"source_catalog": audit["source_catalog"]}, ensure_ascii=False)
     prompt = base
