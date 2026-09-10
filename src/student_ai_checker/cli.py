@@ -21,6 +21,8 @@ from student_ai_checker.grading.approval import criteria_digest, verify_approval
 from student_ai_checker.grading.template_checker import TemplateWorkChecker
 from student_ai_checker.grading.per_criterion import PerCriterionChecker
 from student_ai_checker.grading.visual_review import VISUAL_PIPELINE_VERSION, VisualReviewChecker
+from student_ai_checker.grading.checked_scoring import CheckedScoringChecker
+from student_ai_checker.grading.checked_text import CHECKED_SCORING_VERSION
 
 LOGGER = logging.getLogger("student_ai_checker")
 
@@ -36,6 +38,7 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--template", type=Path, help="Чистый исходный DOCX-бланк")
     check.add_argument("--approval", type=Path, help="Запись утверждения критериев и бланка")
     modes = check.add_mutually_exclusive_group()
+    modes.add_argument("--checked-scoring", action="store_true", help="ПР1 v1: цитаты, расчёт текстовых пунктов и соответствий кодом")
     modes.add_argument("--visual-review", action="store_true", help="Отдельный анализ каждого изображения перед оцениванием критерия")
     modes.add_argument("--per-criterion", action="store_true", help="Экспериментально: проверять по одному критерию, последовательно")
     check.add_argument("--model", help="Имя локальной модели Ollama")
@@ -92,6 +95,8 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
         raise StudentAICheckerError("Файл результата уже существует. Укажите новое имя --output: предыдущая проверка сохранена.")
     if bool(args.template) != bool(args.approval):
         raise StudentAICheckerError("Для проверки по бланку укажите вместе --template и --approval.")
+    if args.checked_scoring and not args.template:
+        raise StudentAICheckerError("checked-scoring требует --template и --approval.")
     criteria = _load_criteria(args.criteria)
     document = DocxExtractor().extract(args.document)
     comparison = None
@@ -107,9 +112,13 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
     base_url = args.ollama_url or settings.ollama_base_url
     LOGGER.info("Extracted %s evidence items (%s images) from %s", len(document.evidence), len(document.images), document.source_name)
     visual_checker = None
+    checked_checker = None
     with OllamaClient(base_url=base_url, model=model, timeout_seconds=settings.ollama_timeout_seconds, num_ctx=settings.ollama_num_ctx) as ollama:
         checker = TemplateWorkChecker(ollama, comparison) if comparison else StudentWorkChecker(ollama)
-        if args.visual_review:
+        if args.checked_scoring:
+            checked_checker = CheckedScoringChecker(ollama, comparison)
+            response = checked_checker.check(document, criteria)
+        elif args.visual_review:
             visual_checker = VisualReviewChecker(ollama, comparison)
             response = visual_checker.check(document, criteria)
         elif args.per_criterion:
@@ -120,12 +129,17 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
     output = _resolved_output(document=document, criteria=criteria, response=response, model=model)
     output["inference_options"] = {
         "num_ctx": settings.ollama_num_ctx,
-        "criterion_mode": "visual_review" if args.visual_review else ("per_criterion" if args.per_criterion else "all_at_once"),
+        "criterion_mode": "checked_scoring" if args.checked_scoring else ("visual_review" if args.visual_review else ("per_criterion" if args.per_criterion else "all_at_once")),
     }
     if visual_checker is not None:
         output["visual_review"] = {
             "pipeline_version": VISUAL_PIPELINE_VERSION, "model_output_is_untrusted": True,
             "criteria": visual_checker.audit,
+        }
+    if checked_checker is not None:
+        output["checked_scoring"] = {
+            "version": CHECKED_SCORING_VERSION, "profile_sha256": checked_checker.profile_digest,
+            "model_output_is_untrusted": True, "criteria": checked_checker.audit,
         }
     output["criteria_sha256"] = criteria_digest(criteria)
     output["approval"] = approval.model_dump(mode="json") if approval else None
