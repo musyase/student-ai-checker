@@ -21,6 +21,8 @@ from .approval import criteria_digest
 
 LOGGER = logging.getLogger(__name__)
 CHECKED_SCORING_VERSION = 1
+# Generation schema revision, independent of the approved grading profile.
+COMPONENT_SCHEMA_VERSION = 2
 PR1_CRITERIA_SHA256 = "51f1bf969fb0777ec9717d27ecb39936fc62b69b9d5c50f094646e971c5977d6"
 PR1_TEMPLATE_SHA256 = "c2193a2dccad9fbd04837e3f5a899cf07999b1734cc1dcaf4166779a7bd89956"
 TEXT_KINDS = {EvidenceKind.PARAGRAPH, EvidenceKind.TABLE_CELL}
@@ -149,7 +151,13 @@ kind=table_cell подтверждает, что текст получен из 
 
 
 def components_schema(parts: tuple[Component, ...], document: ExtractedDocument) -> dict[str, Any]:
+    # Keep the full limits on the Pydantic response models. Large bounded string
+    # repetitions inside nested arrays can break the backend grammar compiler.
+    # Relax ONLY these two generation-time bounds, never the local validation,
+    # source text, quote content, fixed checks, enum values or grading policy.
     schema = ComponentResponse.model_json_schema()
+    for definition, field in (("TextQuote", "quote"), ("ComponentDecision", "reason")):
+        schema["$defs"][definition]["properties"][field].pop("maxLength", None)
     schema["properties"]["checks"].update(minItems=len(parts), maxItems=len(parts))
     schema["$defs"]["ComponentDecision"]["properties"]["check_id"]["enum"] = [p.id for p in parts]
     ids = [e.id for e in document.evidence if e.kind in TEXT_KINDS and e.text and e.text.strip()]
@@ -210,6 +218,11 @@ def check_text_components(client: StructuredClient, criterion: Criterion, parts:
                           document: ExtractedDocument) -> tuple[CriterionResult, dict[str, Any]]:
     audit: dict[str, Any] = {"criterion_id": criterion.id, "method": "quoted_components", "attempts": [],
                              "validation_errors": [], "components": [], "model_output_is_untrusted": True}
+    schema = components_schema(parts, document)
+    audit["generation_schema_version"] = COMPONENT_SCHEMA_VERSION
+    audit["generation_schema_sha256"] = hashlib.sha256(
+        json.dumps(schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     sources = [{"evidence_id": e.id, "kind": e.kind.value, "text": e.text}
                for e in document.evidence if e.kind in TEXT_KINDS and e.text and e.text.strip()]
     system = COMPONENT_SYSTEM + "\nAPPROVED_CRITERION:\n" + criterion.model_dump_json() + "\nFIXED_CHECKS:\n" + json.dumps(
@@ -219,7 +232,7 @@ def check_text_components(client: StructuredClient, criterion: Criterion, parts:
     for attempt in range(2):
         try:
             raw = client.chat_structured(system_prompt=system, user_prompt=prompt,
-                                         schema=components_schema(parts, document))
+                                         schema=schema)
         except OllamaError as exc:
             audit["error"] = str(exc)
             return _result(criterion, None, "Ошибка запроса проверки пунктов; балл не рассчитан.", [], error=True), audit
