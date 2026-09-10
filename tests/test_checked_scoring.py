@@ -227,7 +227,10 @@ def test_full_controller_merges_code_text_and_visual_without_mutating_source(rub
     # The template's hash is substituted only in this unit fixture to select the
     # fixed profile. This is NOT an approval test and is never done in production.
     comp=TemplateComparison(pair[0].source_sha256,PR1_TEMPLATE_SHA256,pair[2].origins,pair[2].filtered_document)
-    sequence=[replies(PARTS[c.id]) for c in rubric.criteria if c.id in PARTS]
+    # Explicit mock decisions for the reference-based production route.
+    sequence=[{'checks':[{'check_id':p.id, 'source_refs':['S000001'],
+                         'reason':'Synthetic source-selection decision.', 'verdict':'met'}
+                        for p in PARTS[c.id]]} for c in rubric.criteria if c.id in PARTS]
     client,http,calls=http_client(sequence)
     class VisualMock:
         def __init__(self,*args):self.audit=[]

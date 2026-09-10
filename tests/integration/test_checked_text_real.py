@@ -14,7 +14,8 @@ from student_ai_checker.ai import OllamaClient
 from student_ai_checker.config import Settings
 from student_ai_checker.documents import DocxExtractor
 from student_ai_checker.documents.template import compare_template
-from student_ai_checker.grading.checked_text import CHECKED_SCORING_VERSION, PARTS, check_text_components
+from student_ai_checker.grading.checked_text import CHECKED_SCORING_VERSION, PARTS
+from student_ai_checker.grading.referenced_text import check_text_references as check_text_components
 from student_ai_checker.models import CriteriaSet
 
 pytestmark = [pytest.mark.integration, pytest.mark.skipif(

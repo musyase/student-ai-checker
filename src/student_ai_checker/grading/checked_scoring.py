@@ -12,8 +12,9 @@ from student_ai_checker.exceptions import DocumentExtractionError, GradingValida
 from student_ai_checker.models import CriteriaSet, ExtractedDocument, GradingResponse
 from .checked_text import (
     CHECKED_SCORING_VERSION, PARTS, _result, check_matching,
-    check_text_components, verify_profile,
+    verify_profile,
 )
+from .referenced_text import check_text_references as check_text_components
 from .validator import GradingValidator
 
 LOGGER = logging.getLogger(__name__)
