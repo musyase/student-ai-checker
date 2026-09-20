@@ -24,3 +24,4 @@ outputs/
 outputs/**/*.preview/
 outputs/**/*.inspect.ndjson
 .ui-smoke-state/
+release-assets-v*/
