@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import copy
+from dataclasses import replace
 from typing import Any, Callable
 
 from student_ai_checker.exceptions import DocumentExtractionError, GradingValidationError
@@ -28,11 +30,12 @@ class CheckedScoringChecker:
         self.audit: list[dict[str, Any]] = []
         self.profile_digest: str | None = None
 
-    def _visual(self):
+    def _visual(self, comparison=None):
+        comparison = comparison or self.comparison
         if self._visual_factory is not None:
-            return self._visual_factory(self.ollama, self.comparison)
+            return self._visual_factory(self.ollama, comparison)
         from .visual_review import VisualReviewChecker
-        return VisualReviewChecker(self.ollama, self.comparison)
+        return VisualReviewChecker(self.ollama, comparison)
 
     def check(self, original: ExtractedDocument, criteria: CriteriaSet) -> GradingResponse:
         self.audit = []
@@ -42,7 +45,33 @@ class CheckedScoringChecker:
         self.profile_digest = verify_profile(criteria, self.comparison.template_sha256)
         if original.source_sha256 != self.comparison.source_sha256:
             raise GradingValidationError("Сопоставление относится к другой работе.")
-        document = self.comparison.filtered_document
+        ambiguous_ids = {
+            evidence_id for evidence_id, origin in self.comparison.origins.items()
+            if origin == "ambiguous"
+        }
+        scoring_origins = {
+            evidence_id: origin
+            for evidence_id, origin in self.comparison.origins.items()
+            if origin != "ambiguous"
+        }
+        document = self.comparison.filtered_document.model_copy(update={
+            "evidence": [
+                evidence for evidence in self.comparison.filtered_document.evidence
+                if evidence.id not in ambiguous_ids
+            ]
+        })
+        try:
+            scoring_comparison = replace(
+                self.comparison,
+                origins=scoring_origins,
+                filtered_document=document,
+            )
+        except TypeError:
+            # Test doubles and connector adapters may expose the same small
+            # comparison protocol without using the production dataclass.
+            scoring_comparison = copy.copy(self.comparison)
+            scoring_comparison.origins = scoring_origins
+            scoring_comparison.filtered_document = document
         if original.issues or document.issues:
             raise DocumentExtractionError("Разбор неполон; checked-scoring остановлен без выставления баллов.")
         if (len(original.evidence_ids) != len(original.evidence)
@@ -53,41 +82,29 @@ class CheckedScoringChecker:
             if not image.binary_data or (image.sha256 and image.sha256 != hashlib.sha256(image.binary_data).hexdigest()):
                 raise DocumentExtractionError("Не удалось подтвердить исходные байты изображения.")
         snapshot = criteria.model_copy(deep=True)
-        if "ambiguous" in self.comparison.origins.values():
-            # No prompt is allowed to turn uncertain template provenance into a grade.
-            return GradingResponse(results=[_result(c, None, "Неоднозначное сопоставление с бланком; нужна ручная проверка.", []) for c in snapshot.criteria])
         self.ollama.assert_ready()
         results = []
         for index, criterion in enumerate(snapshot.criteria, 1):
             LOGGER.info("Проверяемый расчёт: критерий %d/%d: %s", index, len(snapshot.criteria), criterion.id)
             if criterion.id == "pr1.terms":
-                result, trace = check_matching(criterion, original, self.comparison)
+                result, trace = check_matching(criterion, original, scoring_comparison)
             elif criterion.id in PARTS:
-                result, trace = check_text_components(self.ollama, criterion, PARTS[criterion.id], document)
-                # Do not reject a permitted image-only answer after checking only text.
-                # Full textual credit needs no screenshot. A non-full text result with
-                # possible visual evidence remains unresolved in this first increment.
-                if (criterion.id == "pr1.add-button" and document.images
-                        and result.proposed_score is not None and result.proposed_score < criterion.max_score):
-                    trace["text_route_result"] = result.model_dump(mode="json")
-                    trace["policy_guard"] = "visual_alternative_not_evaluated"
-                    result = _result(criterion, None,
-                        "Текстовые пункты проверены, но доступна разрешённая визуальная альтернатива; её должен сверить преподаватель. Отсутствие снимка не является штрафом.",
-                        result.evidence_ids)
+                result, trace = check_text_components(
+                    self.ollama,
+                    criterion,
+                    PARTS[criterion.id],
+                    document,
+                    empty_source_is_proven_absence=True,
+                    resolve_uncertain=True,
+                )
             else:
-                visual = self._visual()
+                visual = self._visual(scoring_comparison)
                 single = CriteriaSet(version=snapshot.version, criteria=[criterion])
                 result = visual.check(original, single).results[0]
                 trace = {"criterion_id": criterion.id, "method": "existing_visual_v3",
                          "model_output_is_untrusted": True, "visual_audit": visual.audit}
-                # The legacy visual synthesis is not trusted to infer complete absence
-                # of installation confirmation from an existing but indirect source.
-                if criterion.id == "pr1.installation-evidence" and result.proposed_score is not None and result.proposed_score < criterion.max_score:
-                    trace["visual_proposal"] = result.model_dump(mode="json")
-                    trace["policy_guard"] = "installation_confirmation_needs_teacher"
-                    result = _result(criterion, None,
-                        "Визуальный конвейер не подтвердил полный балл. Нужно проверить допустимость снимка или текстовой альтернативы; автоматическое снижение по этому пункту пока заблокировано.",
-                        result.evidence_ids)
+            if ambiguous_ids:
+                trace["excluded_ambiguous_evidence_ids"] = sorted(ambiguous_ids)
             trace["scoring_version"] = CHECKED_SCORING_VERSION
             self.audit.append(trace)
             results.append(result)

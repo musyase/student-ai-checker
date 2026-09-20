@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "assignments": {
+    "pr1": {
+      "practice": "1",
+      "criteria": "pr1.criteria.approved.json",
+      "approval": "pr1.approval.json"
+    }
+  }
+}

@@ -88,7 +88,13 @@ def test_real_checked_text(tmp_path, case_id, criterion_id, answer, expected, co
     with OllamaClient(base_url=settings.ollama_base_url, model=settings.ollama_model,
                       timeout_seconds=settings.ollama_timeout_seconds, num_ctx=settings.ollama_num_ctx) as client:
         client.assert_ready()
-        result,audit=check_text_components(client,c,PARTS[c.id],comparison.filtered_document)
+        result,audit=check_text_components(
+            client,
+            c,
+            PARTS[c.id],
+            comparison.filtered_document,
+            empty_source_is_proven_absence=True,
+        )
     record.update(result=result.model_dump(mode='json'),audit=audit)
     # null must fail; quotes and exact fixed component IDs were already validated.
     assert result.proposed_score == expected, json.dumps(record, ensure_ascii=False, indent=2)

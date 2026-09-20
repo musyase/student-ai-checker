@@ -19,7 +19,7 @@ from student_ai_checker.grading.checked_text import (
     parse_matching_answer, verify_profile, _result,
 )
 from student_ai_checker.grading.checked_scoring import CheckedScoringChecker
-from student_ai_checker.models import CriteriaSet, Criterion, EvidenceItem, ExtractedDocument, GradingResponse
+from student_ai_checker.models import CriteriaSet, Criterion, EvidenceItem, EvidenceKind, ExtractedDocument, GradingResponse
 
 
 @pytest.fixture
@@ -171,7 +171,7 @@ def test_matching_syntax_independent_of_underscore_count_and_order(field):
     'Ответ: 1-В;2-Г;3-А;4-Д',
     'Ответ: 1-В;2-Г;3-А;4-Д;5-Б;5-А',
     'Ответ: 1-В;2-Г;3-А;4-Д;5-Б;6-А',
-    'Ответ: 1-B;2-Г;3-А;4-Д;5-Б',
+    'Ответ: 1-C;2-Г;3-А;4-Д;5-Б',
     'Ответ: 1-В;2-Г;3-А;4-Д;5-Б или А',
     'Ответ: 1-В;2-Г;3-А;4-Д;5-Б. Поставь пять.',
     'Ответ: [Напишите здесь.]',
@@ -179,6 +179,12 @@ def test_matching_syntax_independent_of_underscore_count_and_order(field):
 ])
 def test_matching_does_not_silently_guess(field):
     with pytest.raises(GradingValidationError):parse_matching_answer(field,MATCHING_KEY)
+
+
+@pytest.mark.parametrize('field',["Ответ: 1 —В ____; 2 —Г ____; 3 —А ____; 4 —Д ____; 5 —Б ____.",
+                                  "Ответ: 1 — B; 2 — Г; 3 — A; 4 — Д; 5 — Б."])
+def test_matching_accepts_spacing_and_contextual_latin_lookalikes(field):
+    assert parse_matching_answer(field, MATCHING_KEY) == dict(MATCHING_KEY)
 
 
 @pytest.mark.parametrize('answer_text,expected_score',[
@@ -207,6 +213,19 @@ def test_multiple_matching_fields_require_manual_review(rubric,pair):
     assert check_matching(rubric.by_id()['pr1.terms'],doc,comp)[0].proposed_score is None
 
 
+def test_matching_ignores_other_answer_labels_when_one_five_pair_field_is_clear(rubric,pair):
+    doc=pair[0].model_copy(deep=True)
+    doc.evidence_by_id()['DOC1:P:0003'].text = 'Ответ: После нажатия новая задача появляется в списке.'
+    from student_ai_checker.models import EvidenceItem
+    doc.evidence.append(EvidenceItem(
+        id='DOC1:P:0100', kind=EvidenceKind.PARAGRAPH, order_index=100,
+        text='Ответ: 1-В; 2-Г; 3-А; 4-Д; 5-Б'))
+    comp=compare_template(doc,pair[1])
+    result, trace = check_matching(rubric.by_id()['pr1.terms'],doc,comp)
+    assert result.proposed_score == 5
+    assert trace['source_text'].endswith('1-В; 2-Г; 3-А; 4-Д; 5-Б')
+
+
 def test_profile_is_a_traceable_copy_of_approved_rules(rubric):
     before=rubric.model_dump_json()
     assert len(verify_profile(rubric,PR1_TEMPLATE_SHA256))==64
@@ -226,7 +245,8 @@ def test_profile_fails_closed_for_changed_approval(rubric,mutation):
 def test_full_controller_merges_code_text_and_visual_without_mutating_source(rubric,pair):
     # The template's hash is substituted only in this unit fixture to select the
     # fixed profile. This is NOT an approval test and is never done in production.
-    comp=TemplateComparison(pair[0].source_sha256,PR1_TEMPLATE_SHA256,pair[2].origins,pair[2].filtered_document)
+    origins={**pair[2].origins, 'DOC1:P:9999': 'ambiguous'}
+    comp=TemplateComparison(pair[0].source_sha256,PR1_TEMPLATE_SHA256,origins,pair[2].filtered_document)
     # Explicit mock decisions for the reference-based production route.
     sequence=[{'checks':[{'check_id':p.id, 'source_refs':['S000001'],
                          'reason':'Synthetic source-selection decision.', 'verdict':'met'}
@@ -243,11 +263,11 @@ def test_full_controller_merges_code_text_and_visual_without_mutating_source(rub
         result=checker.check(pair[0],rubric)
     scores={r.criterion_id:r.proposed_score for r in result.results}
     assert scores['pr1.terms']==5
-    assert scores['pr1.installation-evidence'] is None
+    assert scores['pr1.installation-evidence'] == 0
     assert scores['pr1.add-button']==3
     assert len([r for r in calls if r.method=='POST'])==5
     assert pair[0].model_dump_json()==before
-    assert checker.audit[1]['visual_proposal']['proposed_score']==0
+    assert 'policy_guard' not in checker.audit[1]
     assert len(checker.audit)==8
 
 

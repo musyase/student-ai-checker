@@ -10,13 +10,14 @@ import hashlib
 from collections.abc import Sequence
 from typing import Any
 
-EVALUATION_CONTEXT_VERSION = 1
+EVALUATION_CONTEXT_VERSION = 4
 
 # Exact descriptions from the approved PR1 v1. Do not apply the interpretation
 # of this task to another task that happens to reuse an ID.
 _DESCRIPTION_DIGESTS = {
     "pr1.usability": "d1627005fe8e03448603d3e732d032afbfe2cba2f861d702cedda0769209d8c9",
     "pr1.installation-report": "ae6819d89e5bb92fe657b7a0e76eea232f6054721beaecd86fd227921d8edc56",
+    "pr1.add-button": "ff49bd58fbe59cf6b649320f39331d7cb6b0cc664a8b5604214ae904ee4f8a2d",
 }
 _FRAGMENTS = {
     "pr1.usability": {
@@ -28,6 +29,11 @@ _FRAGMENTS = {
         "initial": "описано исходное состояние компьютера",
         "actions": "описаны собственные действия",
         "outcome": "указан достигнутый этап и, при возникновении затруднения, проблема и действия после неё",
+    },
+    "pr1.add-button": {
+        "added": "эта новая задача появляется в списке",
+        "count": "задач становится три",
+        "input": "предложено понятное поведение текста в поле ввода",
     },
 }
 
@@ -84,6 +90,33 @@ def compile_evaluation_checks(
                     "перерисовки или программной реализации."
                 ),
             )
+        elif criterion_id == "pr1.add-button":
+            operations = {
+                "added": "report_new_task",
+                "count": "report_new_count",
+                "input": "evaluate_input_policy",
+            }
+            questions = {
+                "added": "В ответе описано, что после нажатия новая задача появляется в списке.",
+                "count": "В ответе описано, что после нажатия задач становится три.",
+                "input": "В ответе предложено понятное поведение текста в поле ввода после добавления.",
+            }
+            check.update(
+                operation=operations[key], requirement=questions[key],
+                rubric_fragments=[
+                    "Исходное условие:",
+                    text,
+                    "Очистка поля — допустимый, но не единственный возможный вариант:",
+                    "Не требуй кода.",
+                ],
+                interpretation=(
+                    "Для поведения поля достаточно конкретной понятной политики: очистить или освободить поле, "
+                    "оставить текст для редактирования, заменить или иным образом объяснить, что происходит с введённым текстом. "
+                    "Фраза о том, чтобы освободить поле от уже введённого текста, является такой политикой и засчитывается. "
+                    "Не требуй именно очистку, описание события интерфейса или программную реализацию. "
+                    "Если ответ прямо говорит, что изменение списка или количества не описано, этот пункт не выполнен."
+                ),
+            )
         else:
             operations = {"initial": "report_initial_state", "actions": "report_own_actions",
                           "outcome": "report_reached_stage"}
@@ -105,6 +138,8 @@ def compile_evaluation_checks(
                 ],
                 interpretation=(
                     "Различай исходное состояние, собственные действия и достигнутый этап. "
+                    "Сообщение о том, что среда или редактор уже были на компьютере до начала работы, "
+                    "засчитывается как описание исходного состояния, даже если дальнейшие действия не описаны. "
                     "Одно предложение может раскрывать несколько пунктов, но только если содержит "
                     "их смысл. Не выводи результат действий из одного факта исходного состояния. "
                     "Если достигнутый этап не описан в доступном ответе, это пропуск пункта, "

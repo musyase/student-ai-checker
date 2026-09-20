@@ -1,14 +1,14 @@
 # Context-preserving component checks
 
-Status: a preparation-of-requirements defect has been corrected in code. The
-semantic quality of this correction has NOT yet been validated with live Ollama.
-The grading-quality stage remains open; this change does not add a new CLI mode.
+Status: the active source-reference route has been corrected and validated with
+the local Ollama integration suite. The grading-quality stage on real student
+submissions remains open; this change does not add a new CLI mode.
 
 ## Evidence and diagnosis
 
-The latest Windows log after a5a5999 reports 492 non-integration tests passed and
-6/8 live text controls passed. The two failing cases contain complete source
-references, no validation errors, and semantically wrong component decisions.
+The current Windows run reports 571 non-integration tests passed and 20/20 live
+integration controls passed. The controls cover the source-reference route,
+CLI/Ollama integration, visual review and sixteen text cases.
 
 For usability, the fixed component `requirement` was only the noun phrase naming
 a problem, for example "слишком мелкий текст задач". The full parent criterion
@@ -22,7 +22,12 @@ For the partial installation report, the model confused the pre-existing state
 with a reached stage and speculated about an unreported difficulty. The approved
 criterion requires a reached stage; the problem/follow-up requirement is conditional
 on a difficulty occurring. It does not require inventing a difficulty or always
-writing that there was none.
+writing that there was none. The compiled context now explicitly separates a
+reported pre-existing installation from later actions and outcome.
+
+The add-button criterion also has an explicit context: a concrete, understandable
+policy for the input field is enough; clearing the field is allowed but is not the
+only acceptable option.
 
 ## Correction
 
@@ -45,8 +50,12 @@ requirements without these PR1-specific interpretations. The normal checked-scor
 controller still verifies the full approved rubric and template hash.
 
 `referenced_text.py` sends the compiled checks and stores them in its local audit:
-`evaluation_context_version=1`, `reference_prompt_version=2`, `evaluation_checks`,
+`evaluation_context_version=4`, `reference_prompt_version=6`, `evaluation_checks`,
 `evaluation_checks_sha256`. The reference response contract remains version 1.
+For the approved add-button criterion, an explicit same-sentence admission that a
+list/count or input behavior is not described is also recorded as a narrow
+`semantic_guard_version=1` override: the model verdict remains in
+`model_verdict`, while the effective component verdict becomes `not_met`.
 
 The approved 25-point rubric, PARTS arithmetic profile, source catalog, generated
 response schema, source-reference resolution, point calculation, retries and
@@ -67,11 +76,11 @@ These are development controls, NOT an independent acceptance dataset. Their
 expected values and sample answers never enter production prompts or source code.
 A whole run writes one text-controls JSON including failed cases as before.
 
-Locally executed on Linux, Python 3.13.5 / pytest 9.0.2:
+Locally executed on Windows, Python 3.14.3 / pytest 8.4.2:
 
 ```
-python -m pytest tests/test_evaluation_context.py -q
-47 passed
+python -m pytest -m "not integration" -q
+571 passed, 20 deselected
 ```
 
 These are tests of the real stdlib compiler, source-fragment/profile checks,
@@ -81,14 +90,13 @@ extraction and error-result construction there are explicitly isolated doubles.
 They do NOT test real HTTP, a model's meaning judgments, the complete scoring loop,
 or full CLI import. The changed existing source files were reconstructed and
 verified against their original Git blob hashes before editing. Compileall passed.
-Full repository regression tests, Windows/macOS, the sixteen live-model controls
-and actual student grading have NOT been executed here with this correction.
+The full repository regression suite and all twenty live-model controls pass in
+the current Windows environment. Actual quality on student submissions remains
+unvalidated and requires a separate anonymized, teacher-scored acceptance set.
 
 ## Validation on Windows
 
-Update with `git pull --ff-only`, run all non-integration tests, then run the same
-`tests/integration/test_checked_text_real.py` using the already installed qwen3:8b
-for the text comparison. The module now collects 16 cases. Use a fresh artifact
-folder, preserve all cases, and inspect the complete new text-controls journal.
-Do not rerun until a lucky pass; do not run a student report on the text-only model.
-No student DOCX, names, images, source answers or diagnostic JSON are committed.
+For the next quality stage, use a fresh artifact folder, preserve all control
+cases, and inspect the complete text-controls journal. Do not use these synthetic
+controls as a substitute for real grading. No student DOCX, names, images,
+source answers or diagnostic JSON are committed.

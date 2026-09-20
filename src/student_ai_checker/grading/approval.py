@@ -7,9 +7,10 @@ import json
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from student_ai_checker.exceptions import StudentAICheckerError
+from student_ai_checker.grading.grade_scale import GradeScale
 from student_ai_checker.models import CriteriaSet
 
 
@@ -23,7 +24,12 @@ class ApprovalRecord(BaseModel):
     criteria_version: int = Field(ge=1)
     criteria_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     template_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    grade_scale: None = None
+    grade_scale: GradeScale = Field(default_factory=GradeScale.standard)
+
+    @field_validator("grade_scale", mode="before")
+    @classmethod
+    def use_standard_scale_when_omitted(cls, value):
+        return GradeScale.standard() if value is None else value
 
 
 def criteria_digest(criteria: CriteriaSet) -> str:

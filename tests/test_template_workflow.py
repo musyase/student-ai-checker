@@ -86,7 +86,10 @@ def test_pr1_snapshot_is_exactly_the_approved_draft():
     assert sum(x.max_score for x in c.criteria) == 25
     record = verify_approval(root / "examples/pr1.approval.json", criteria=c,
                              template_sha256="c2193a2dccad9fbd04837e3f5a899cf07999b1734cc1dcaf4166779a7bd89956")
-    assert record.grade_scale is None
+    assert record.grade_scale is not None
+    assert record.grade_scale.grade_for(12, 25) == 3
+    assert record.grade_scale.grade_for(13, 25) == 4
+    assert record.grade_scale.grade_for(18, 25) == 5
 
 
 @pytest.mark.parametrize("field,value", [("status", "draft"), ("approved_by", "AI"), ("grade_scale", {"90": 5}), ("criteria_version", 2), ("template_sha256", "0" * 64)])

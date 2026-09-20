@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -23,8 +24,10 @@ from .evaluation_context import (
     EVALUATION_CONTEXT_VERSION, EvaluationContextError, compile_evaluation_checks,
 )
 
-REFERENCE_PROMPT_VERSION = 2
+REFERENCE_PROMPT_VERSION = 6
 REFERENCE_CONTRACT_VERSION = 1
+SEMANTIC_GUARD_VERSION = 1
+UNCERTAINTY_RESOLUTION_PROMPT_VERSION = 1
 MAX_FRAGMENT_CHARS = 6000  # Same bound as the existing local TextQuote validator.
 MAX_REFERENCES = 2048  # Reject oversized catalogs; never silently drop content.
 
@@ -110,6 +113,10 @@ source_catalog содержит настоящие абзацы/ячейки п�
 
 met — нужный смысл присутствует; not_met — доступный ответ неполон или неверен;
 uncertain — конкретное противоречие или неоднозначность мешает решению.
+Сначала проверь явные отрицания и признания пропуска: если ответ прямо говорит,
+что требуемое изменение/поведение «не описано», «не указано» или не приведено,
+это not_met для соответствующего пункта. Не засчитывай такой пункт по названию
+задания, окружающей фразе или общему описанию действия.
 Недописанный пункт сам по себе не является недоступностью данных. Не домысливай
 действия или результат по одному описанию исходного состояния. При конкретном
 противоречии оставь uncertain, а не выбирай удобную часть ответа.
@@ -152,6 +159,12 @@ def resolve_decisions(criterion: Criterion, parts: tuple[Component, ...],
     by_ref = {r.ref_id: r for r in refs}
     decisions: list[dict[str, Any]] = []
     selected: dict[str, list[SourceReference]] = {}
+    model_verdicts: dict[str, str] = {}
+    semantic_guards: dict[str, str] = {}
+    obvious_text_resolutions: dict[str, str] = {}
+    source_text = "\n".join(
+        e.text for e in document.evidence if e.kind in TEXT_KINDS and e.text and e.text.strip()
+    )
     for item in response.checks:
         if len(item.source_refs) != len(set(item.source_refs)):
             raise GradingValidationError("duplicate_source_reference")
@@ -160,8 +173,23 @@ def resolve_decisions(criterion: Criterion, parts: tuple[Component, ...],
         if item.verdict in {"met", "not_met"} and refs and not item.source_refs:
             raise GradingValidationError("missing_source_reference")
         selected[item.check_id] = [by_ref[r] for r in item.source_refs]
+        model_verdicts[item.check_id] = item.verdict
+        effective_verdict = item.verdict
+        obvious_reason = None
+        if item.verdict == "uncertain":
+            selected_text = "\n".join(ref.text for ref in selected[item.check_id])
+            obvious_reason = _obvious_text_resolution(
+                criterion.id, item.check_id, selected_text,
+            )
+            if obvious_reason:
+                effective_verdict = "met"
+                obvious_text_resolutions[item.check_id] = obvious_reason
+        guard_reason = _explicit_absence_guard(criterion.id, item.check_id, source_text)
+        if guard_reason and item.verdict != "not_met":
+            effective_verdict = "not_met"
+            semantic_guards[item.check_id] = guard_reason
         decisions.append({
-            "check_id": item.check_id, "verdict": item.verdict, "reason": item.reason,
+            "check_id": item.check_id, "verdict": effective_verdict, "reason": item.reason,
             "quotes": [{"evidence_id": ref.evidence_id, "quote": ref.text}
                        for ref in selected[item.check_id]],
         })
@@ -171,12 +199,82 @@ def resolve_decisions(criterion: Criterion, parts: tuple[Component, ...],
     )
     for row in rows:
         row["source_refs"] = [r.ref_id for r in selected[row["check_id"]]]
+        row["model_verdict"] = model_verdicts[row["check_id"]]
         row["citation_origin"] = "application_source_slice"
         row["source_locations"] = [{
             "evidence_id": r.evidence_id, "start": r.start, "end": r.end,
             "source_text_sha256": r.source_text_sha256,
         } for r in selected[row["check_id"]]]
+        if row["check_id"] in semantic_guards:
+            row["semantic_guard"] = semantic_guards[row["check_id"]]
+        if row["check_id"] in obvious_text_resolutions:
+            row["obvious_text_rule"] = obvious_text_resolutions[row["check_id"]]
     return result, rows
+
+
+def _explicit_absence_guard(criterion_id: str, check_id: str, source_text: str) -> str | None:
+    """Block credit when the answer explicitly says a required subpoint is absent.
+
+    This is deliberately narrow: it protects only the approved add-button profile
+    and only unambiguous Russian omission phrases. The model's original verdict is
+    retained in the audit; this function only changes the effective score input.
+    """
+    if criterion_id != "pr1.add-button" or not source_text.strip():
+        return None
+    text = " ".join(source_text.casefold().split())
+    # Keep the negative phrase and its subject in the same sentence. This avoids
+    # treating an omitted input policy as an omission of the list/count response.
+    for sentence in re.split(r"[.!?;]+", text):
+        if re.search(r"\bне\s+(?:опис\w*|указ\w*|привед\w*|сообщ\w*|уточн\w*)\b", sentence) is None:
+            continue
+        if check_id in {"added", "count"} and re.search(
+            r"спис\w*|количеств\w*|задач\w*|нов\w*\s+(?:задач\w*|запис\w*)", sentence
+        ):
+            return "Явное указание ответа, что изменение списка или количества задач не описано; кредит за этот пункт заблокирован."
+        if check_id == "input" and re.search(r"пол\w*\s+ввод\w*|ввод\w*|текст\w*", sentence):
+            return "Явное указание ответа, что поведение поля ввода или введённого текста не указано; кредит за этот пункт заблокирован."
+    return None
+
+
+def _obvious_text_resolution(criterion_id: str, check_id: str, source_text: str) -> str | None:
+    """Resolve only narrow, explicit text evidence left uncertain by the model.
+
+    This is not a keyword grader: each rule requires a direct action phrase tied to
+    the specific subpoint. It runs only on the model-selected source slice and only
+    for an original ``uncertain`` verdict; explicit ``not_met`` decisions remain
+    untouched.
+    """
+    text = " ".join(source_text.casefold().split())
+    if not text:
+        return None
+    if criterion_id == "pr1.usability":
+        patterns = {
+            "button": (
+                r"(?:переимен\w*|замен\w*|измен\w*).{0,80}(?:кноп\w*|добав\w*|подтверд\w*|создат\w*|\+)"
+                r"|кноп\w*.{0,80}(?:добав\w*|подтверд\w*|создат\w*|\+)"
+            ),
+            "input": (
+                r"(?:добав\w*|добавлен\w*|напис\w*).{0,80}(?:подпис\w*|подсказ\w*|плейсхолдер\w*)"
+                r"|(?:пол\w*).{0,80}(?:подпис\w*|подсказ\w*|ввест\w*|напис\w*)"
+            ),
+            "font": (
+                r"(?:увелич\w*|измен\w*|регулир\w*).{0,80}(?:шрифт\w*|текст\w*|размер\w*|кегл\w*)"
+                r"|(?:размер\w*|шрифт\w*|текст\w*).{0,80}(?:увелич\w*|настро\w*|регулир\w*|редакт\w*)"
+            ),
+        }
+        messages = {
+            "button": "Явно предложено изменить подпись или действие кнопки добавления.",
+            "input": "Явно предложено добавить подпись или подсказку к полю ввода.",
+            "font": "Явно предложено увеличить или настроить размер текста/шрифта.",
+        }
+        if check_id in patterns and re.search(patterns[check_id], text):
+            return messages[check_id]
+    if criterion_id == "pr1.add-button" and check_id == "added":
+        has_new_task = re.search(r"нов\w*\s+(?:задач\w*|задан\w*|запис\w*)", text)
+        has_list_action = re.search(r"(?:списк\w*|список\w*|дел\w*).{0,100}(?:добав\w*|появ\w*|отобраз\w*)", text)
+        if has_new_task and has_list_action:
+            return "Явно описано появление новой задачи в списке."
+    return None
 
 
 def _digest(data: Any) -> str:
@@ -184,13 +282,56 @@ def _digest(data: Any) -> str:
                                      separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+UNCERTAINTY_RESOLUTION_SYSTEM = REFERENCE_SYSTEM + """
+
+Это второй проход только по пунктам, которые первый проход пометил uncertain.
+Разреши неопределённость, если исходный фрагмент прямо подтверждает выполнение
+или прямо показывает пропуск/неверное действие. Не додумывай отсутствующий ответ.
+Используй uncertain только при настоящем противоречии, повреждении или невозможности
+прочитать источник. Краткость сама по себе не является противоречием. Верни только
+перечисленные unresolved_checks; баллов в ответе нет.
+"""
+
+
+def _merge_uncertainty_resolution(
+    criterion: Criterion,
+    parts: tuple[Component, ...],
+    first_response: ReferenceResponse,
+    resolution: ReferenceResponse,
+    document: ExtractedDocument,
+    refs: tuple[SourceReference, ...],
+) -> tuple[CriterionResult, list[dict[str, Any]], int]:
+    first_by_id = {item.check_id: item for item in first_response.checks}
+    resolution_by_id = {item.check_id: item for item in resolution.checks}
+    unresolved_ids = {item.check_id for item in first_response.checks if item.verdict == "uncertain"}
+    if set(resolution_by_id) != unresolved_ids or len(resolution_by_id) != len(resolution.checks):
+        raise GradingValidationError("uncertainty_resolution_check_ids_mismatch")
+    merged = [
+        resolution_by_id[item.check_id]
+        if item.check_id in unresolved_ids and resolution_by_id[item.check_id].verdict != "uncertain"
+        else item
+        for item in first_response.checks
+    ]
+    result, rows = resolve_decisions(
+        criterion, parts, ReferenceResponse(checks=merged), document, refs,
+    )
+    applied = sum(
+        1 for item in first_response.checks
+        if item.check_id in unresolved_ids and resolution_by_id[item.check_id].verdict != "uncertain"
+    )
+    return result, rows, applied
+
+
 def check_text_references(client: StructuredClient, criterion: Criterion,
-                          parts: tuple[Component, ...], document: ExtractedDocument
+                          parts: tuple[Component, ...], document: ExtractedDocument,
+                          *, empty_source_is_proven_absence: bool = False,
+                          resolve_uncertain: bool = False,
                           ) -> tuple[CriterionResult, dict[str, Any]]:
     """One request and at most one structural repair; never retry a valid uncertainty."""
     audit: dict[str, Any] = {
         "criterion_id": criterion.id, "method": "source_reference_components",
         "reference_contract_version": REFERENCE_CONTRACT_VERSION,
+        "semantic_guard_version": SEMANTIC_GUARD_VERSION,
         "source_sha256": document.source_sha256,
         "attempts": [], "validation_errors": [], "components": [],
         "source_catalog": [], "model_output_is_untrusted": True,
@@ -214,6 +355,34 @@ def check_text_references(client: StructuredClient, criterion: Criterion,
     audit["evaluation_checks_sha256"] = _digest(evaluation_checks)
     audit["source_catalog"] = [r.payload() for r in refs]
     audit["source_catalog_sha256"] = _digest(audit["source_catalog"])
+
+    if empty_source_is_proven_absence and not refs:
+        rows = [
+            {
+                "check_id": part.id,
+                "requirement": part.requirement,
+                "max_score": part.points,
+                "points": 0,
+                "verdict": "not_met",
+                "quotes": [],
+                "source_refs": [],
+                "model_reason_unverified": "",
+                "citation_origin": "application_empty_source_catalog",
+                "source_locations": [],
+            }
+            for part in parts
+        ]
+        audit["components"] = rows
+        audit["known_points"] = 0
+        audit["unresolved_components"] = 0
+        audit["decision_origin"] = "application_empty_source_catalog"
+        return _result(
+            criterion,
+            0,
+            "После сравнения с чистым бланком кандидатский текстовый ответ отсутствует; пункты не выполнены.",
+            [],
+        ), audit
+
     schema = references_schema(parts, refs)
     audit["generation_schema_sha256"] = _digest(schema)
     system = (REFERENCE_SYSTEM + "\nAPPROVED_CRITERION:\n" + criterion.model_dump_json()
@@ -231,7 +400,55 @@ def check_text_references(client: StructuredClient, criterion: Criterion,
         try:
             response = ReferenceResponse.model_validate_json(raw)
             result, rows = resolve_decisions(criterion, parts, response, document, refs)
+            if resolve_uncertain and any(row.get("model_verdict") == "uncertain" for row in rows):
+                unresolved_parts = tuple(
+                    part for part in parts
+                    if next(row for row in rows if row["check_id"] == part.id).get("model_verdict") == "uncertain"
+                )
+                resolution_audit: dict[str, Any] = {
+                    "prompt_version": UNCERTAINTY_RESOLUTION_PROMPT_VERSION,
+                    "check_ids": [part.id for part in unresolved_parts],
+                    "attempts": [],
+                    "applied_count": 0,
+                    "model_output_is_untrusted": True,
+                }
+                resolution_prompt = json.dumps({
+                    "source_catalog": audit["source_catalog"],
+                    "unresolved_checks": [
+                        {"check_id": part.id, "requirement": part.requirement, "points": part.points}
+                        for part in unresolved_parts
+                    ],
+                }, ensure_ascii=False)
+                resolution_schema = references_schema(unresolved_parts, refs)
+                try:
+                    resolution_raw = client.chat_structured(
+                        system_prompt=UNCERTAINTY_RESOLUTION_SYSTEM,
+                        user_prompt=resolution_prompt,
+                        schema=resolution_schema,
+                    )
+                    resolution_audit["attempts"].append(resolution_raw)
+                    resolution_response = ReferenceResponse.model_validate_json(resolution_raw)
+                    result, rows, applied = _merge_uncertainty_resolution(
+                        criterion, parts, response, resolution_response, document, refs,
+                    )
+                    resolution_audit["applied_count"] = applied
+                    resolution_audit["remaining_count"] = sum(
+                        row.get("points") is None for row in rows
+                    )
+                except (ValidationError, GradingValidationError, OllamaError) as exc:
+                    # Preserve the validated first-pass result; a failed second pass
+                    # must never turn a known uncertainty into an automatic zero.
+                    resolution_audit["error"] = type(exc).__name__
+                    resolution_audit["remaining_count"] = sum(
+                        row.get("points") is None for row in rows
+                    )
+                audit["uncertainty_resolution"] = resolution_audit
             audit["components"] = rows
+            audit["semantic_guards"] = [
+                {"check_id": row["check_id"], "reason": row["semantic_guard"],
+                 "model_verdict": row["model_verdict"], "effective_verdict": row["verdict"]}
+                for row in rows if "semantic_guard" in row
+            ]
             audit["known_points"] = sum(r["points"] or 0 for r in rows)
             audit["unresolved_components"] = sum(r["points"] is None for r in rows)
             return result, audit

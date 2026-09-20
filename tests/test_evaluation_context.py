@@ -200,8 +200,8 @@ def _isolated_prompt_path():
     class GradingError(Exception):pass
     class TransportError(Exception):pass
     ns={'json':json,'hashlib':hashlib,'Any':object,
-        'REFERENCE_SYSTEM':system,'REFERENCE_CONTRACT_VERSION':1,'REFERENCE_PROMPT_VERSION':2,
-        'EVALUATION_CONTEXT_VERSION':1,'EvaluationContextError':ContextError,
+        'REFERENCE_SYSTEM':system,'REFERENCE_CONTRACT_VERSION':1,'SEMANTIC_GUARD_VERSION':1,'REFERENCE_PROMPT_VERSION':6,
+        'EVALUATION_CONTEXT_VERSION':4,'EvaluationContextError':ContextError,
         'compile_evaluation_checks':compile_checks,'build_references':lambda doc:(),
         'references_schema':lambda parts,refs:{'fixture_schema':True},
         'GradingValidationError':GradingError,'OllamaError':TransportError,
@@ -226,7 +226,7 @@ def test_compiled_requirements_are_actually_sent_and_audited(rubric,cid):
     assert len(model.calls)==1
     checks=json.loads(model.calls[0]['system_prompt'].split('\nFIXED_CHECKS:\n')[1])
     assert checks==compile_checks(cid,c.description,parts(cid))==audit['evaluation_checks']
-    assert audit['evaluation_context_version']==1 and audit['reference_prompt_version']==2
+    assert audit['evaluation_context_version']==4 and audit['reference_prompt_version']==6
     expected=hashlib.sha256(json.dumps(checks,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
     assert audit['evaluation_checks_sha256']==expected
     assert audit['attempts']==[] # A transport failure is still not a model answer.

@@ -15,9 +15,11 @@
 - ✅ JSON Schema + Pydantic + дополнительная проверка criterion/evidence/score.
 - ✅ Одна ограниченная повторная попытка при некорректном ответе модели с передачей конкретной причины валидации.
 - ✅ Минимальный CLI для одной работы.
-- ✅ 23 unit-теста подтверждены на Windows.
+- ✅ 576 неинтеграционных тестов подтверждены на Windows.
 - ✅ Реальная связка Windows → Ollama → `qwen3.5:4b` → structured multimodal result подтверждена локальным запуском.
 - ✅ Полный CLI E2E `student.docx + criteria.json → result.json` подтверждён локальным запуском через настоящий Ollama.
+- ✅ Локальное ручное подтверждение/исправление через `student-ai-checker review` без перезаписи AI-аудита.
+- ✅ Локальное приложение преподавателя: `student-ai-checker app` открывает web-интерфейс с запуском проверки, реестром по группам и ручными решениями.
 - 🚧 SQLite, очередь группы, история, PySide6 и экспорт относятся к следующим этапам.
 - ❌ PDF пока не поддерживается.
 
@@ -59,6 +61,10 @@ result.json
 ```
 
 Подробности: [`docs/architecture.md`](docs/architecture.md).
+
+План проверки качества на реальных обезличенных работах: [`docs/quality-evaluation.md`](docs/quality-evaluation.md).
+
+Основа рабочего процесса преподавателя: [`docs/teacher-workflow.md`](docs/teacher-workflow.md).
 
 ## Требования для разработки
 
@@ -136,6 +142,77 @@ student-ai-checker check \
 
 Бинарные изображения намеренно не дублируются внутрь JSON. Они остаются локальными и передаются Ollama только в памяти для мультимодальной проверки.
 
+## Массовая проверка работ
+
+Для обычного запуска достаточно указать только папку и файл задания:
+
+```powershell
+student-ai-checker batch `
+  --folder "C:\path\to\Работы" `
+  --assignment "C:\path\to\Работы\ПР1.docx"
+```
+
+Команда сама определяет профиль по имени задания, запускает два worker-а,
+создаёт каталог результатов и формирует `results.csv` и `manual-review.json`.
+В `results.csv` есть набранные баллы и предварительная оценка по шкале 2–5;
+итоговая оценка появляется после полного подтверждения преподавателем.
+Для разбора преподавателем дополнительно создаются `teacher-roster.csv`
+(работы отсортированы по группе и фамилии) и `groups-summary.csv`.
+
+Для пакетной проверки DOCX используется `scripts/run_checked_batch.py`. По умолчанию
+запускаются два независимых worker-а, а результаты кэшируются по хэшу работы,
+шаблона, критериев, утверждения и модели:
+
+```powershell
+python scripts/run_checked_batch.py `
+  --source-root "C:\path\to\Работы" `
+  --template "C:\path\to\Работы\ПР1.docx" `
+  --criteria examples\pr1.criteria.approved.json `
+  --approval examples\pr1.approval.json `
+  --output-root "C:\path\to\results" `
+  --workers 2
+```
+
+Если процесс остановился, повторите ту же команду с `--resume`: завершённые
+документы будут взяты из манифеста/кэша, а продолжится только оставшаяся очередь.
+Число worker-ов можно увеличить, но для локального Ollama безопасным стартовым
+значением остаётся `2`.
+
+## Локальное приложение преподавателя
+
+Для запуска интерфейса без Docker:
+
+```powershell
+student-ai-checker app
+```
+
+Приложение откроется в браузере на `localhost`. Оно использует тот же локальный
+Python-конвейер и Ollama, позволяет выбрать папку и задание через системный
+диалог, показывает студентов по группам, очередь ручной проверки и сохраняет
+решения преподавателя рядом с результатами пакета.
+
+### Установочная версия
+
+Для конечного пользователя Docker не нужен. Desktop-обвязка Tauri уже настроена
+на Windows NSIS `.exe` и macOS `.dmg`. Перед сборкой нужно один раз установить
+Rust/Tauri toolchain, Python-зависимость PyInstaller командой
+`pip install -e .[desktop]`, собрать Python backend sidecar и выполнить `npm install`:
+
+```powershell
+.\packaging\build_backend.ps1
+npm install
+npm run tauri:build -- --bundles nsis
+```
+
+На macOS backend sidecar нужно собрать локально под нужную архитектуру, затем
+запустить `npm run tauri:build -- --bundles dmg`. Ollama и выбранная модель остаются локальной
+зависимостью, а приложение проверяет их доступность при старте.
+
+Для воспроизводимой сборки обеих платформ добавлен GitHub Actions workflow
+`.github/workflows/build-installers.yml`: ручной запуск или push тега `v*`
+создаёт отдельные артефакты Windows `.exe` и macOS `.dmg`; для тега `v*` они
+также прикрепляются к GitHub Release.
+
 ## Критерии
 
 Минимальная форма одного критерия:
@@ -158,6 +235,13 @@ student-ai-checker check \
 ```
 
 После утверждения criteria-файл является доверенным входом. AI не имеет права менять `id`, `title`, `max_score` или `allowed_scores`.
+
+Шкала итоговой оценки хранится в утверждённом `approval.json` как минимальный
+процент для каждой отметки. По умолчанию для всех заданий используется мягкое
+правило: 0% → 2, 30% → 3, 50% → 4, 70% → 5. Процент считается от суммы максимальных баллов,
+без округления. Если хотя бы один критерий не получил балл из-за недостатка
+подтверждений, предварительная оценка не назначается и работа остаётся в
+`manual-review.json`.
 
 ## Статусы
 
@@ -198,12 +282,12 @@ Integration suite использует настоящий локальный Oll
 
 ### Подтверждённый локальный запуск
 
-9 сентября 2026 года на Windows, Python 3.14.3, были реально выполнены тесты проекта.
+19 сентября 2026 года на Windows, Python 3.14.3, были реально выполнены тесты проекта.
 
 Unit suite:
 
 ```text
-23 passed, 2 deselected in 0.34s
+571 passed, 20 deselected in 8.71s
 ```
 
 Настоящий integration suite с Ollama + `qwen3.5:4b`:
@@ -211,7 +295,7 @@ Unit suite:
 ```text
 tests/integration/test_cli_real.py::test_real_cli_docx_to_result_json PASSED
 tests/integration/test_ollama_real.py::test_real_docx_to_ollama_structured_result PASSED
-2 passed, 23 deselected in 3.23s
+20 passed, 571 deselected in 37.24s
 ```
 
 Таким образом подтверждён не только внутренний AI-вызов, но и полный путь `student.docx + criteria.json → CLI → Ollama/Qwen → строгая валидация → result.json`.

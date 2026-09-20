@@ -67,7 +67,7 @@ def run_mock(criterion, doc, replies):
 
 @pytest.mark.parametrize("criterion_id", list(PARTS))
 @pytest.mark.parametrize("blank", [False, True])
-def test_only_two_generation_bounds_change_and_models_remain_intact(criterion_id, blank):
+def test_generation_contract_and_local_models_remain_intact(criterion_id, blank):
     parts, doc = PARTS[criterion_id], document(blank=blank)
     original_model_schema = ComponentResponse.model_json_schema()
     before = copy.deepcopy(original_model_schema)
@@ -76,6 +76,9 @@ def test_only_two_generation_bounds_change_and_models_remain_intact(criterion_id
     expected["$defs"]["ComponentDecision"]["properties"]["check_id"]["enum"] = [p.id for p in parts]
     if not blank:
         expected["$defs"]["TextQuote"]["properties"]["evidence_id"]["enum"] = ["DOC1:P:0002"]
+        expected["$defs"]["ComponentDecision"]["properties"]["quotes"]["minItems"] = 1
+    else:
+        expected["$defs"]["ComponentDecision"]["properties"]["quotes"]["maxItems"] = 0
     assert expected["$defs"]["TextQuote"]["properties"]["quote"].pop("maxLength") == 6000
     assert expected["$defs"]["ComponentDecision"]["properties"]["reason"].pop("maxLength") == 2000
     actual = components_schema(parts, doc)
@@ -84,7 +87,7 @@ def test_only_two_generation_bounds_change_and_models_remain_intact(criterion_id
     # No fallback to plain JSON, loss of fields, relaxed scores or extra properties.
     assert isinstance(actual, dict) and actual["additionalProperties"] is False
     assert actual["$defs"]["TextQuote"]["additionalProperties"] is False
-    assert actual["$defs"]["ComponentDecision"]["properties"]["quotes"]["maxItems"] == 8
+    assert actual["$defs"]["ComponentDecision"]["properties"]["quotes"]["maxItems"] == (0 if blank else 8)
     if blank:
         assert "enum" not in actual["$defs"]["TextQuote"]["properties"]["evidence_id"]
 
@@ -139,7 +142,7 @@ def test_long_original_text_and_maximum_quote_are_sent_without_truncation(rubric
     assert request["think"] is False and request["stream"] is False
     assert doc.model_dump_json() == before
     assert audit["components"][0]["quotes"][0]["quote"] == quote
-    assert audit["generation_schema_version"] == COMPONENT_SCHEMA_VERSION == 2
+    assert audit["generation_schema_version"] == COMPONENT_SCHEMA_VERSION == 3
     digest = hashlib.sha256(json.dumps(request["format"], ensure_ascii=False, sort_keys=True,
                                       separators=(",", ":")).encode("utf-8")).hexdigest()
     assert audit["generation_schema_sha256"] == digest
@@ -198,7 +201,7 @@ def test_reported_grammar_error_is_still_single_attempt_without_fallback(rubric)
     assert result.proposed_score is None and result.status.value == "unable_to_check"
     assert len(sent) == 1 and isinstance(sent[0]["format"], dict)
     assert audit["attempts"] == [] and "failed to parse grammar" in audit["error"]
-    assert audit["generation_schema_version"] == 2
+    assert audit["generation_schema_version"] == 3
 
 
 def test_empty_candidate_set_no_empty_enum_or_fake_positive(rubric):

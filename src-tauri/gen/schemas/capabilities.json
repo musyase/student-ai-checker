@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capabilities for the local Student AI Checker window.","local":true,"windows":["main"],"permissions":["core:default",{"identifier":"shell:allow-spawn","allow":[{"name":"binaries/student-ai-checker-backend","sidecar":true}]}]}}

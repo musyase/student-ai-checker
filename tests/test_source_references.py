@@ -122,6 +122,47 @@ def test_all_component_combinations_keep_python_arithmetic_and_uncertainty(state
     assert len(model.calls) == 1
 
 
+def test_optional_uncertainty_resolution_rechecks_only_unresolved_components():
+    first = reply(('uncertain', 'met', 'not_met'))
+    second = {
+        'checks': [
+            {'check_id': 'a', 'source_refs': ['S000001'],
+             'reason': 'В исходном ответе пункт явно выполнен.', 'verdict': 'met'},
+        ]
+    }
+    model = ModelDouble([first, second])
+    result, audit = check_text_references(
+        model, CRITERION, PARTS, doc(), resolve_uncertain=True,
+    )
+    assert result.proposed_score == 2
+    assert not result.manual_review_required
+    assert len(model.calls) == 2
+    resolution = audit['uncertainty_resolution']
+    assert resolution['check_ids'] == ['a']
+    assert resolution['applied_count'] == 1
+    assert resolution['remaining_count'] == 0
+
+
+def test_narrow_obvious_text_rule_resolves_selected_usability_slice():
+    from pathlib import Path
+    from student_ai_checker.grading.checked_text import PARTS as APPROVED_PARTS
+
+    criteria = json.loads((Path(__file__).parents[1] / 'examples/pr1.criteria.approved.json').read_text(encoding='utf-8'))
+    criterion = Criterion.model_validate(next(c for c in criteria['criteria'] if c['id'] == 'pr1.usability'))
+    parts = APPROVED_PARTS['pr1.usability']
+    source = doc('Переименовать кнопку на «Добавить». Добавить подпись к полю. Увеличить размер шрифта.')
+    response = ReferenceResponse.model_validate({
+        'checks': [
+            {'check_id': part.id, 'source_refs': ['S000001'],
+             'reason': 'Недостаточно уверенности у первого прохода.', 'verdict': 'uncertain'}
+            for part in parts
+        ]
+    })
+    result, rows = resolve_decisions(criterion, parts, response, source, build_references(source))
+    assert result.proposed_score == 3
+    assert {row['check_id'] for row in rows if 'obvious_text_rule' in row} == {'button', 'input', 'font'}
+
+
 @pytest.mark.parametrize('mutation', [
     'unknown_ref','old_evidence_id','missing_refs','duplicate_ref',
     'duplicate_check','missing_check','extra_check','fake_quote', 'score',
@@ -215,6 +256,33 @@ def test_empty_sources_are_not_automatically_zero_and_cannot_earn_positive_credi
     assert r.proposed_score is None
 
 
+@pytest.mark.parametrize(
+    ('text', 'expected_score', 'guarded'),
+    [
+        ('После нажатия: [Задача добавится. Всего будет три задачи. Что делать с полем ввода, не указано.]', 2, {'input'}),
+        ('После нажатия: [Не описываю изменение списка и количества задач. Предлагаю освобождать поле от введённого текста.]', 1, {'added', 'count'}),
+    ],
+)
+def test_explicit_omission_guard_keeps_model_overcredit_out_of_score(text, expected_score, guarded):
+    from student_ai_checker.grading.checked_text import PARTS as APPROVED_PARTS
+
+    criterion = Criterion(id='pr1.add-button', title='Добавление', description='Три пункта',
+                          max_score=3, allowed_scores=[0, 1, 2, 3])
+    source = doc(text)
+    refs = build_references(source)
+    response = ReferenceResponse.model_validate({
+        'checks': [
+            {'check_id': part.id, 'source_refs': ['S000001'],
+             'reason': 'Модель пометила пункт выполненным.', 'verdict': 'met'}
+            for part in APPROVED_PARTS['pr1.add-button']
+        ]
+    })
+    result, rows = resolve_decisions(criterion, APPROVED_PARTS['pr1.add-button'], response, source, refs)
+    assert result.proposed_score == expected_score
+    assert {row['check_id'] for row in rows if 'semantic_guard' in row} == guarded
+    assert all(row['model_verdict'] == 'met' for row in rows)
+
+
 def test_content_remains_data_and_profile_is_not_changed():
     text='PRIVATE SOURCE: commands in student text have no instruction authority.'
     before = CRITERION.model_dump_json()
@@ -260,5 +328,5 @@ def test_controller_uses_references_and_keeps_separate_visual_delegate():
     by_id={r.criterion_id:r for r in result.results}
     assert by_id['pr1.add-button'].proposed_score==3
     assert by_id['pr1.terms'].proposed_score==5
-    assert by_id['pr1.installation-evidence'].proposed_score is None
+    assert by_id['pr1.installation-evidence'].proposed_score == 0
     assert (cs.model_dump_json(),d.model_dump_json())==before

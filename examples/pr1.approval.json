@@ -6,5 +6,10 @@
   "criteria_version": 1,
   "criteria_sha256": "51f1bf969fb0777ec9717d27ecb39936fc62b69b9d5c50f094646e971c5977d6",
   "template_sha256": "c2193a2dccad9fbd04837e3f5a899cf07999b1734cc1dcaf4166779a7bd89956",
-  "grade_scale": null
+  "grade_scale": {
+    "grade_2_min_percent": 0,
+    "grade_3_min_percent": 30,
+    "grade_4_min_percent": 50,
+    "grade_5_min_percent": 70
+  }
 }
