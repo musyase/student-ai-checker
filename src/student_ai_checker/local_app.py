@@ -294,14 +294,29 @@ def create_handler(app: LocalApp):
         def log_message(self, format: str, *args: Any) -> None:
             return
 
+        def send_cors_headers(self) -> None:
+            # Tauri serves the frontend from its own origin while the Python
+            # sidecar is bound to loopback. No credentials are used, so a
+            # wildcard keeps the local desktop shell portable across OSes.
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
         def send_json(self, payload: Any, status: int = 200) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
+            self.send_cors_headers()
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+
+        def do_OPTIONS(self) -> None:
+            self.send_response(204)
+            self.send_cors_headers()
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def error(self, message: str, status: int = 400) -> None:
             self.send_json({"error": message}, status)
@@ -345,6 +360,7 @@ def create_handler(app: LocalApp):
                 return self.error("Исходный DOCX не найден.", 404)
             data = path.read_bytes()
             self.send_response(200)
+            self.send_cors_headers()
             self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
             self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
             self.send_header("Content-Length", str(len(data)))
@@ -360,6 +376,7 @@ def create_handler(app: LocalApp):
                 return self.error("Экспорт ещё не готов.", 404)
             data = path.read_bytes()
             self.send_response(200)
+            self.send_cors_headers()
             self.send_header("Content-Type", "text/csv; charset=utf-8")
             self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
             self.send_header("Content-Length", str(len(data)))
@@ -375,6 +392,7 @@ def create_handler(app: LocalApp):
                 return self.error("Файл не найден.", 404)
             data = candidate.read_bytes()
             self.send_response(200)
+            self.send_cors_headers()
             self.send_header("Content-Type", mimetypes.guess_type(candidate.name)[0] or "application/octet-stream")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()

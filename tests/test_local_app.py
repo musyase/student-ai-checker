@@ -72,3 +72,27 @@ def test_local_app_downloads_teacher_exports(tmp_path):
     finally:
         server.shutdown()
         thread.join(timeout=2)
+
+
+def test_local_app_allows_tauri_preflight(tmp_path):
+    server, thread = running_app(tmp_path)
+    try:
+        connection = HTTPConnection("127.0.0.1", server.server_port)
+        connection.request(
+            "OPTIONS",
+            "/api/health",
+            headers={
+                "Origin": "http://tauri.localhost",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 204
+        assert response.getheader("Access-Control-Allow-Origin") == "*"
+        assert "POST" in response.getheader("Access-Control-Allow-Methods", "")
+        connection.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)

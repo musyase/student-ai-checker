@@ -215,8 +215,8 @@ npm run tauri:build -- --bundles nsis
 создаёт отдельные артефакты Windows `.exe` и macOS `.dmg`; для тега `v*` они
 также прикрепляются к GitHub Release.
 
-Готовый релиз `v0.1.2` доступен на странице проекта:
-<https://github.com/musyase/student-ai-checker/releases/tag/v0.1.2>.
+Готовый релиз `v0.1.3` доступен на странице проекта:
+<https://github.com/musyase/student-ai-checker/releases/tag/v0.1.3>.
 
 ## Критерии
 
