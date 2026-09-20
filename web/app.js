@@ -13,13 +13,17 @@ const state = {
 };
 
 const app = document.querySelector("#app");
+const API_BASE = ["tauri:", "asset:"].includes(window.location.protocol)
+  || window.location.hostname === "tauri.localhost"
+  ? "http://127.0.0.1:8765"
+  : "";
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[char]));
 }
 
 function api(path, options = {}) {
-  return fetch(path, { headers: { "Content-Type": "application/json" }, ...options }).then(async (response) => {
+  return fetch(`${API_BASE}${path}`, { headers: { "Content-Type": "application/json" }, ...options }).then(async (response) => {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `Ошибка ${response.status}`);
     return data;
