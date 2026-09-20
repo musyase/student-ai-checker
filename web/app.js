@@ -108,7 +108,7 @@ async function loadRuns() {
   let data;
   for (let attempt = 0; attempt < 12; attempt += 1) {
     try {
-      state.health = await api("/api/health");
+      await refreshHealth(false);
       data = await api("/api/runs");
       break;
     } catch (error) {
@@ -118,6 +118,25 @@ async function loadRuns() {
   }
   state.runs = data.runs || [];
   if (!state.activeRun && state.runs.length) await selectRun(state.runs[0].id);
+}
+
+function healthSignature(health) {
+  return JSON.stringify({
+    ollama: Boolean(health?.ollama),
+    model: health?.model || "",
+    model_available: Boolean(health?.model_available),
+  });
+}
+
+async function refreshHealth(renderWhenChanged = true) {
+  const previous = healthSignature(state.health);
+  try {
+    state.health = await api("/api/health");
+  } catch (_error) {
+    state.health = { ollama: false, model: "", model_available: false, models: [] };
+  }
+  if (renderWhenChanged && healthSignature(state.health) !== previous) render();
+  return state.health;
 }
 
 async function selectRun(id) {
@@ -174,4 +193,7 @@ async function saveReview() {
 function showError(error) { state.error = error.message || String(error); render(); }
 
 loadRuns().then(render).catch(showError);
-setInterval(() => { if (state.activeRun?.status === "running") refreshRun().catch(showError); }, 2500);
+setInterval(() => {
+  refreshHealth().catch(showError);
+  if (state.activeRun?.status === "running") refreshRun().catch(showError);
+}, 2500);
