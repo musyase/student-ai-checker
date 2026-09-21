@@ -9,6 +9,7 @@ from http.server import ThreadingHTTPServer
 
 from student_ai_checker.config import Settings
 from student_ai_checker.local_app import LocalApp, create_handler
+import student_ai_checker.local_app as local_app_module
 
 
 def running_app(tmp_path: Path):
@@ -96,3 +97,49 @@ def test_local_app_allows_tauri_preflight(tmp_path):
     finally:
         server.shutdown()
         thread.join(timeout=2)
+
+
+def test_new_run_does_not_pass_resume_without_a_manifest(tmp_path, monkeypatch):
+    app = LocalApp(
+        repo_root=Path(__file__).parents[1],
+        state_dir=tmp_path / "state",
+        settings=Settings.from_env(),
+    )
+    output = tmp_path / "output"
+    captured = {}
+
+    class DummyProcess:
+        def wait(self):
+            return 0
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        return DummyProcess()
+
+    monkeypatch.setattr(local_app_module.subprocess, "Popen", fake_popen)
+    run = {
+        "id": "fresh-run",
+        "assignment": str(tmp_path / "ПР1.docx"),
+        "profiles_root": str(Path(__file__).parents[1] / "examples"),
+        "folder": str(tmp_path),
+        "output_root": str(output),
+        "practice": "1",
+        "model": "test",
+        "workers": 1,
+        "profile_mode": "existing",
+    }
+    app._start_run(run)
+    assert "--resume" not in captured["command"]
+
+
+def test_stale_no_manifest_run_is_not_reported_as_pending(tmp_path):
+    app = LocalApp(
+        repo_root=Path(__file__).parents[1],
+        state_dir=tmp_path / "state",
+        settings=Settings.from_env(),
+    )
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "app-run.log").write_text("Cannot resume without manifest", encoding="utf-8")
+    run = {"id": "stale", "output_root": str(output)}
+    assert app.run_status(run) == "failed"

@@ -99,7 +99,13 @@ class LocalApp:
         manifest = self.manifest(run)
         if manifest.get("case_count") and manifest.get("completed_count", 0) + manifest.get("manual_review_count", 0) + manifest.get("failed_count", 0) >= manifest.get("case_count", 0):
             return "completed" if not manifest.get("failed_count") else "failed"
-        return "pending" if not process else "failed"
+        if process is not None:
+            return "failed"
+        # A process from an earlier app session cannot still be pending in
+        # memory. Do not leave a stale no-manifest run as "Ожидает запуска".
+        if (Path(run["output_root"]) / "app-run.log").exists():
+            return "failed"
+        return "pending"
 
     def run_summary(self, run: dict[str, Any]) -> dict[str, Any]:
         manifest = self.manifest(run)
@@ -209,8 +215,9 @@ class LocalApp:
             "--practice", profile.practice,
             "--model", run["model"],
             "--workers", str(run["workers"]),
-            "--resume",
         ]
+        if (Path(run["output_root"]) / "batch-manifest.json").exists():
+            command.append("--resume")
         if run.get("profile_mode") == "automatic":
             command.append("--generic-scoring")
         command.append("--automatic")
