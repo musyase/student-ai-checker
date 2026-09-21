@@ -130,6 +130,36 @@ def test_new_run_does_not_pass_resume_without_a_manifest(tmp_path, monkeypatch):
     }
     app._start_run(run)
     assert "--resume" not in captured["command"]
+    assert not output.exists() or not list(output.iterdir())
+
+
+def test_launcher_log_does_not_make_fresh_output_nonempty(tmp_path, monkeypatch):
+    app = LocalApp(
+        repo_root=Path(__file__).parents[1],
+        state_dir=tmp_path / "state",
+        settings=Settings.from_env(),
+    )
+    output = tmp_path / "output"
+
+    class DummyProcess:
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(local_app_module.subprocess, "Popen", lambda *args, **kwargs: DummyProcess())
+    run = {
+        "id": "fresh-log-run",
+        "assignment": str(tmp_path / "ПР1.docx"),
+        "profiles_root": str(Path(__file__).parents[1] / "examples"),
+        "folder": str(tmp_path),
+        "output_root": str(output),
+        "practice": "1",
+        "model": "test",
+        "workers": 1,
+        "profile_mode": "existing",
+    }
+    app._start_run(run)
+    assert not output.exists() or not list(output.iterdir())
+    assert app._run_log_path(run).is_file()
 
 
 def test_stale_no_manifest_run_is_not_reported_as_pending(tmp_path):

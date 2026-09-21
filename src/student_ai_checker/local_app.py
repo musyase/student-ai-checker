@@ -92,6 +92,10 @@ class LocalApp:
     def manifest(self, run: dict[str, Any]) -> dict[str, Any]:
         return json_file(Path(run["output_root"]) / "batch-manifest.json", {"cases": []})
 
+    def _run_log_path(self, run: dict[str, Any]) -> Path:
+        """Keep launcher diagnostics outside the runner's empty output folder."""
+        return self.state_dir / "logs" / f"{run['id']}.log"
+
     def run_status(self, run: dict[str, Any]) -> str:
         process = self._processes.get(str(run["id"]))
         if process is not None and process.poll() is None:
@@ -103,7 +107,7 @@ class LocalApp:
             return "failed"
         # A process from an earlier app session cannot still be pending in
         # memory. Do not leave a stale no-manifest run as "Ожидает запуска".
-        if (Path(run["output_root"]) / "app-run.log").exists():
+        if self._run_log_path(run).exists() or (Path(run["output_root"]) / "app-run.log").exists():
             return "failed"
         return "pending"
 
@@ -226,9 +230,8 @@ class LocalApp:
         env["PYTHONPATH"] = str(self.repo_root / "src") + (
             os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
         )
-        output = Path(run["output_root"])
-        output.mkdir(parents=True, exist_ok=True)
-        log_path = output / "app-run.log"
+        log_path = self._run_log_path(run)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         log = log_path.open("a", encoding="utf-8")
         process = subprocess.Popen(command, cwd=self.repo_root, env=env, stdout=log, stderr=subprocess.STDOUT, text=True)
         self._processes[run["id"]] = process
