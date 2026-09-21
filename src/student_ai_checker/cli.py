@@ -46,6 +46,11 @@ def _parser() -> argparse.ArgumentParser:
     modes.add_argument("--checked-scoring", action="store_true", help="ПР1 v1: цитаты, расчёт текстовых пунктов и соответствий кодом")
     modes.add_argument("--visual-review", action="store_true", help="Отдельный анализ каждого изображения перед оцениванием критерия")
     modes.add_argument("--per-criterion", action="store_true", help="Экспериментально: проверять по одному критерию, последовательно")
+    check.add_argument(
+        "--automatic",
+        action="store_true",
+        help="Зафиксировать полностью определённый результат автоматически без подтверждения преподавателя.",
+    )
     check.add_argument("--model", help="Имя локальной модели Ollama")
     check.add_argument("--ollama-url", help="URL локального Ollama")
     batch = subcommands.add_parser("batch", help="Проверить папку работ по одному заданию")
@@ -108,7 +113,13 @@ def _resolved_output(*, document, criteria, response, model: str) -> dict[str, o
     return {"schema_version": 1, "document": {"source_name": document.source_name, "source_sha256": document.source_sha256}, "criteria_version": criteria.version, "model": model, "results": results, "resolved_evidence": evidence, "extraction_issues": [issue.model_dump(mode="json") for issue in document.issues]}
 
 
-def _score_summary(criteria: CriteriaSet, response: GradingResponse, grade_scale=None) -> dict[str, object]:
+def _score_summary(
+    criteria: CriteriaSet,
+    response: GradingResponse,
+    grade_scale=None,
+    *,
+    automatic: bool = False,
+) -> dict[str, object]:
     from decimal import Decimal
 
     scores = [r.proposed_score for r in response.results if r.proposed_score is not None]
@@ -118,15 +129,20 @@ def _score_summary(criteria: CriteriaSet, response: GradingResponse, grade_scale
     proposed_total = points if complete else None
     effective_scale = grade_scale or GradeScale.standard()
     proposed_grade = effective_scale.grade_for(points, maximum) if complete else None
+    manual_review_required = any(r.manual_review_required for r in response.results)
+    automatic_final = automatic and complete and not manual_review_required
     return {
         "max_score": maximum,
         "scored_points": points,
         "proposed_total": proposed_total,
         "proposed_grade": proposed_grade,
         "unresolved_count": len(criteria.criteria) - len(scores),
-        "manual_review_required": any(r.manual_review_required for r in response.results),
+        "manual_review_required": manual_review_required,
         "teacher_confirmed": False,
-        "grade": None,
+        "automatic_final": automatic_final,
+        "final_total": proposed_total if automatic_final else None,
+        "final_grade": proposed_grade if automatic_final else None,
+        "grade": proposed_grade if automatic_final else None,
     }
 
 
@@ -184,7 +200,12 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
     output["criteria_sha256"] = criteria_digest(criteria)
     output["approval"] = approval.model_dump(mode="json") if approval else None
     output["template_comparison"] = comparison.report() if comparison else None
-    output["summary"] = _score_summary(criteria, response, approval.grade_scale if approval else None)
+    output["summary"] = _score_summary(
+        criteria,
+        response,
+        approval.grade_scale if approval else None,
+        automatic=args.automatic,
+    )
     try:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         # Exclusive creation also protects against a file appearing during inference.
@@ -206,7 +227,10 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
             print(f"Предварительная оценка: {summary['proposed_grade']}/5.")
         else:
             print("Шкала оценки не задана в утверждении критериев.")
-    print("Итоговая оценка фиксируется после подтверждения преподавателем.")
+    if output["summary"].get("automatic_final"):
+        print("Итоговая оценка выставлена автоматически: подтверждение преподавателя не требуется.")
+    else:
+        print("Итоговая оценка фиксируется после подтверждения преподавателем.")
     return 0
 
 

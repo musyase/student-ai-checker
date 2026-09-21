@@ -16,7 +16,7 @@ from pathlib import Path
 from student_ai_checker.teacher_roster import write_teacher_roster_csv
 
 
-BATCH_CACHE_VERSION = 2
+BATCH_CACHE_VERSION = 3
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,16 +34,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-root", type=Path, default=None,
                         help="Reusable result cache; defaults beside source-root.")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--generic-scoring",
+        action="store_true",
+        help="Use the general evidence-based checker instead of the PR1 checked pilot.",
+    )
+    parser.add_argument(
+        "--automatic",
+        action="store_true",
+        help="Finalize complete scores without teacher confirmation.",
+    )
     return parser.parse_args()
 
 
 def practice_pattern(practice: str) -> re.Pattern[str]:
-    if practice != "1":
-        raise SystemExit(f"No conservative filename pattern is configured for practice {practice!r}.")
+    normalized = str(practice).strip()
+    if not normalized.isdigit() or int(normalized) < 1:
+        raise SystemExit(f"Некорректный номер практической работы: {practice!r}.")
+    number = str(int(normalized))
     return re.compile(
-        r"(?:практическ\w*\s*(?:работ\w*\s*)?(?:№\s*)?1|"
-        r"(?<![^\W_])пр\s*[._№-]?\s*0?1(?![0-9])|"
-        r"(?<![^\W_])п\s*1(?![0-9]))",
+        rf"(?:практическ\w*\s*(?:работ\w*\s*)?(?:№\s*)?0?{number}|"
+        rf"(?<![^\W_])пр\s*[._№-]?\s*0?{number}(?![0-9])|"
+        rf"(?<![^\W_])п\s*0?{number}(?![0-9]))",
         re.IGNORECASE,
     )
 
@@ -140,7 +152,8 @@ def file_sha256(path: Path) -> str:
 
 
 def cache_key(document: Path, template: Path, criteria: Path, approval: Path,
-              model: str) -> str:
+              model: str, *, generic_scoring: bool = False,
+              automatic: bool = False) -> str:
     payload = {
         "version": BATCH_CACHE_VERSION,
         "document": file_sha256(document),
@@ -148,6 +161,8 @@ def cache_key(document: Path, template: Path, criteria: Path, approval: Path,
         "criteria": file_sha256(criteria),
         "approval": file_sha256(approval),
         "model": model,
+        "generic_scoring": generic_scoring,
+        "automatic": automatic,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -192,14 +207,18 @@ def fill_record_from_result(record: dict, result_path: Path) -> dict:
 
 def run_case(index: int, file_path: Path, *, source: Path, template: Path,
              criteria: Path, approval: Path, output: Path, cache_root: Path,
-             repo_root: Path, env: dict[str, str], practice: str, model: str) -> dict:
+             repo_root: Path, env: dict[str, str], practice: str, model: str,
+             generic_scoring: bool, automatic: bool) -> dict:
     group_dir = output / file_path.parent.name
     group_dir.mkdir(parents=True, exist_ok=True)
     stamp = f"{index:03d}"
     result_path = group_dir / f"{stamp}.result.json"
     stdout_path = group_dir / f"{stamp}.stdout.txt"
     stderr_path = group_dir / f"{stamp}.stderr.txt"
-    key = cache_key(file_path, template, criteria, approval, model)
+    key = cache_key(
+        file_path, template, criteria, approval, model,
+        generic_scoring=generic_scoring, automatic=automatic,
+    )
     record = result_record(index, file_path, source, output, result_path, key, practice)
     cached_result = cache_root / f"{key}.result.json"
     if cached_result.exists():
@@ -213,7 +232,9 @@ def run_case(index: int, file_path: Path, *, source: Path, template: Path,
         *( [] if getattr(sys, "frozen", False) else ["check"] ),
         "--document", str(file_path), "--template", str(template),
         "--criteria", str(criteria), "--approval", str(approval),
-        "--checked-scoring", "--output", str(result_path), "--model", model,
+        *( [] if generic_scoring else ["--checked-scoring"] ),
+        "--output", str(result_path), "--model", model,
+        *( ["--automatic"] if automatic else [] ),
     ]
     try:
         completed = subprocess.run(
@@ -271,7 +292,10 @@ def main() -> int:
         raise SystemExit(f"No explicitly named student DOCX files found for PR{args.practice}.")
 
     expected_keys = {
-        index: cache_key(file_path, template, criteria, approval, args.model)
+        index: cache_key(
+            file_path, template, criteria, approval, args.model,
+            generic_scoring=args.generic_scoring, automatic=args.automatic,
+        )
         for index, file_path in enumerate(files, 1)
     }
     records_by_index: dict[int, dict] = {}
@@ -309,6 +333,8 @@ def main() -> int:
                 criteria=criteria, approval=approval, output=output,
                 cache_root=cache_root, repo_root=repo_root, env=env,
                 practice=args.practice, model=args.model,
+                generic_scoring=args.generic_scoring,
+                automatic=args.automatic,
             ): (index, file_path)
             for index, file_path in pending
         }

@@ -23,8 +23,11 @@ from urllib.parse import parse_qs, unquote, urlparse
 import httpx
 
 from student_ai_checker.batch import resolve_assignment_profile
+from student_ai_checker.auto_profile import generate_auto_profile
 from student_ai_checker.config import Settings
+from student_ai_checker.documents.docx_extractor import sha256_file
 from student_ai_checker.exceptions import StudentAICheckerError
+from student_ai_checker.grading.approval import verify_approval
 from student_ai_checker.teacher_review import build_teacher_review
 from student_ai_checker.teacher_roster import build_teacher_roster
 
@@ -103,6 +106,7 @@ class LocalApp:
         return {
             "id": run["id"],
             "profile": run.get("profile"),
+            "profile_mode": run.get("profile_mode", "existing"),
             "folder": run.get("folder"),
             "assignment": run.get("assignment"),
             "output_root": run.get("output_root"),
@@ -117,6 +121,7 @@ class LocalApp:
     def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         folder = Path(str(payload.get("folder", ""))).expanduser().resolve()
         assignment = Path(str(payload.get("assignment", ""))).expanduser().resolve()
+        explicit_profiles_root = bool(payload.get("profiles_root"))
         profiles_root = Path(str(payload.get("profiles_root") or self.repo_root / "examples")).expanduser().resolve()
         workers = int(payload.get("workers") or 2)
         model = str(payload.get("model") or self.settings.ollama_model)
@@ -126,7 +131,31 @@ class LocalApp:
             raise StudentAICheckerError(f"Файл задания не найден: {assignment}")
         if workers < 1 or workers > 8:
             raise StudentAICheckerError("Количество потоков должно быть от 1 до 8.")
-        profile = resolve_assignment_profile(assignment, profiles_root)
+        profile_generated = False
+        try:
+            profile = resolve_assignment_profile(assignment, profiles_root)
+        except StudentAICheckerError:
+            if explicit_profiles_root:
+                raise
+            profiles_root = self.state_dir / "profiles"
+            generate_auto_profile(
+                assignment,
+                profiles_root,
+                settings=self.settings,
+                model=model,
+            )
+            profile = resolve_assignment_profile(assignment, profiles_root)
+            profile_generated = True
+        if not explicit_profiles_root and self._automatic_profile_is_stale(profile, assignment):
+            profiles_root = self.state_dir / "profiles"
+            generate_auto_profile(
+                assignment,
+                profiles_root,
+                settings=self.settings,
+                model=model,
+            )
+            profile = resolve_assignment_profile(assignment, profiles_root)
+            profile_generated = True
         run_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
         output = folder.parent / "_student-ai-checker-results" / f"{profile.key}-{run_id}"
         run = {
@@ -136,6 +165,7 @@ class LocalApp:
             "profiles_root": str(profiles_root),
             "output_root": str(output),
             "profile": profile.key,
+            "profile_mode": "automatic" if profile_generated else "existing",
             "practice": profile.practice,
             "model": model,
             "workers": workers,
@@ -148,6 +178,22 @@ class LocalApp:
             self._save_runs(runs)
         self._start_run(run)
         return self.run_summary(run)
+
+    def _automatic_profile_is_stale(self, profile, assignment: Path) -> bool:
+        """Regenerate only profiles explicitly created by the automatic flow."""
+        try:
+            approval = json_file(Path(profile.approval), {})
+            if not isinstance(approval, dict) or approval.get("approval_mode") != "automatic":
+                return False
+            criteria = self._load_criteria(profile.criteria)
+            verify_approval(
+                profile.approval,
+                criteria=criteria,
+                template_sha256=sha256_file(assignment),
+            )
+            return False
+        except StudentAICheckerError:
+            return True
 
     def _start_run(self, run: dict[str, Any]) -> None:
         profile = resolve_assignment_profile(Path(run["assignment"]), Path(run["profiles_root"]))
@@ -165,6 +211,9 @@ class LocalApp:
             "--workers", str(run["workers"]),
             "--resume",
         ]
+        if run.get("profile_mode") == "automatic":
+            command.append("--generic-scoring")
+        command.append("--automatic")
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
         env["PYTHONPATH"] = str(self.repo_root / "src") + (

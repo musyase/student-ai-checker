@@ -48,6 +48,7 @@ class StudentWorkChecker:
             try:
                 parsed = json.loads(raw)
                 response = GradingResponse.model_validate(parsed)
+                response = self._normalize_structural_evidence_aliases(response, document)
                 validated = self.validator.validate(
                     response,
                     criteria=criteria,
@@ -60,6 +61,44 @@ class StudentWorkChecker:
         raise OllamaResponseError(
             "Ответ локальной модели дважды не прошёл строгую проверку; нужна ручная проверка."
         ) from last_error
+
+    @staticmethod
+    def _normalize_structural_evidence_aliases(
+        response: GradingResponse,
+        document: ExtractedDocument,
+    ) -> GradingResponse:
+        """Expand a model's table-level reference to real extracted cells.
+
+        The extractor intentionally stores physical table cells, while a model
+        may cite the visible table container (``DOC1:T:0001``). This maps only
+        that deterministic parent-to-child alias; all other unknown IDs remain
+        unknown and are rejected by the normal validator.
+        """
+
+        known = document.evidence_ids
+        normalized_results = []
+        changed = False
+        for result in response.results:
+            evidence_ids: list[str] = []
+            for evidence_id in result.evidence_ids:
+                if evidence_id in known:
+                    evidence_ids.append(evidence_id)
+                    continue
+                children = sorted(
+                    candidate for candidate in known
+                    if candidate.startswith(evidence_id + ":R:")
+                )
+                if children:
+                    evidence_ids.extend(children)
+                    changed = True
+                else:
+                    evidence_ids.append(evidence_id)
+            if evidence_ids != result.evidence_ids:
+                changed = True
+                normalized_results.append(result.model_copy(update={"evidence_ids": evidence_ids}))
+            else:
+                normalized_results.append(result)
+        return response.model_copy(update={"results": normalized_results}) if changed else response
 
     @staticmethod
     def _build_system_prompt(criteria: CriteriaSet) -> str:

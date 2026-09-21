@@ -14,6 +14,12 @@ def test_assignment_key_accepts_common_practice_names(name: str):
     assert assignment_key(Path(name)) == "pr1"
 
 
+@pytest.mark.parametrize("name", ["ПР2.docx", "Практическая №10.docx", "П 3.docx"])
+def test_assignment_key_accepts_other_practice_numbers(name: str):
+    expected = {"ПР2.docx": "pr2", "Практическая №10.docx": "pr10", "П 3.docx": "pr3"}[name]
+    assert assignment_key(Path(name)) == expected
+
+
 def test_profile_registry_resolves_approved_files(tmp_path: Path):
     (tmp_path / "pr1.criteria.approved.json").write_text("{}", encoding="utf-8")
     (tmp_path / "pr1.approval.json").write_text("{}", encoding="utf-8")

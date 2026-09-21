@@ -1,4 +1,4 @@
-"""Verify a teacher-selected rubric/template snapshot, never an AI approval."""
+"""Verify the immutable rubric/template snapshot used for a grading run."""
 
 from __future__ import annotations
 
@@ -19,7 +19,8 @@ class ApprovalRecord(BaseModel):
 
     status: Literal["approved"]
     approved_at: AwareDatetime
-    approved_by: Literal["teacher"]
+    approved_by: Literal["teacher", "automatic"]
+    approval_mode: Literal["manual", "automatic"] = "manual"
     digest_format: Literal["criteria-model-json-v1"]
     criteria_version: int = Field(ge=1)
     criteria_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")

@@ -227,6 +227,13 @@ def test_real_image_bytes_are_forwarded_by_checker(pair, criteria):
     assert stub.calls[0]["images"] == [image]
 
 
+def test_table_container_alias_is_expanded_to_extracted_cells(pair, criteria):
+    comp = compare_template(pair[3], pair[2])
+    stub = OllamaStub([response("DOC1:T:0001").model_dump_json()])
+    out = TemplateWorkChecker(stub, comp).check(pair[3], criteria)
+    assert out.results[0].evidence_ids == ["DOC1:T:0001:R:0002:C:0002"]
+
+
 def test_comparison_cannot_be_reused_for_another_submission(pair, criteria):
     changed = pair[3].model_copy(update={"source_sha256": "different"})
     stub = OllamaStub([])
@@ -263,6 +270,24 @@ def test_cli_creates_json_and_preserves_previous_result(tmp_path, pair, criteria
     assert cli.main(args) == 2
     assert len(stub.calls) == 1
     assert output.read_bytes() == original
+
+
+def test_automatic_mode_finalizes_a_complete_result(tmp_path, pair, criteria, monkeypatch):
+    rubric = tmp_path / "criteria.json"
+    rubric.write_text(criteria.model_dump_json(), encoding="utf-8")
+    approval = approval_file(tmp_path, criteria, pair[2].source_sha256)
+    output = tmp_path / "automatic.json"
+    stub = OllamaStub([response().model_dump_json()])
+    monkeypatch.setattr(cli, "OllamaClient", lambda **kwargs: stub)
+    assert cli.main([
+        "check", "--document", str(pair[1]), "--template", str(pair[0]),
+        "--criteria", str(rubric), "--approval", str(approval),
+        "--automatic", "--output", str(output),
+    ]) == 0
+    summary = json.loads(output.read_text(encoding="utf-8"))["summary"]
+    assert summary["automatic_final"] is True
+    assert summary["grade"] == 5
+    assert summary["final_total"] == 1
 
 
 def test_template_mode_requires_approval_before_io_or_ai(tmp_path):
