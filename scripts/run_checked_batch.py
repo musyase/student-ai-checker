@@ -107,6 +107,8 @@ def write_batch_reports(output: Path, manifest: dict) -> None:
             "scored_points": case.get("scored_points"),
             "max_score": case.get("max_score"),
             "proposed_grade": case.get("proposed_grade"),
+            "estimated_grade": case.get("estimated_grade"),
+            "grade_is_estimate": case.get("grade_is_estimate"),
             "grade": case.get("grade"),
             "manual_review_required": case.get("manual_review_required"),
             "error": case.get("error"),
@@ -115,7 +117,8 @@ def write_batch_reports(output: Path, manifest: dict) -> None:
             manual_items.append({
                 "index": case["index"], "source_name": case["source_name"],
                 "source_relative_path": case["source_relative_path"],
-                "kind": "technical_batch_failure", "reason": case.get("error"),
+                "kind": "automatic_check_incomplete",
+                "reason": "Автоматическая проверка не завершилась по всем критериям; проверьте работу вручную.",
             })
         if result_payload:
             for result in result_payload.get("results", []):
@@ -183,6 +186,8 @@ def result_record(index: int, file_path: Path, source: Path, output: Path,
         "scored_points": None,
         "max_score": None,
         "proposed_grade": None,
+        "estimated_grade": None,
+        "grade_is_estimate": False,
         "grade": None,
         "manual_review_required": None,
         "error": None,
@@ -198,6 +203,8 @@ def fill_record_from_result(record: dict, result_path: Path) -> dict:
         "scored_points": summary.get("scored_points"),
         "max_score": summary.get("max_score"),
         "proposed_grade": summary.get("proposed_grade"),
+        "estimated_grade": summary.get("estimated_grade"),
+        "grade_is_estimate": summary.get("grade_is_estimate", False),
         "grade": summary.get("grade"),
         "manual_review_required": summary.get("manual_review_required"),
         "error": None,

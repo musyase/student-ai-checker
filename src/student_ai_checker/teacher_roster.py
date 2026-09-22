@@ -56,12 +56,19 @@ def build_teacher_roster(manifest: dict[str, Any], manual_payload: dict[str, Any
         index = int(case["index"])
         label = student_label(case["source_name"])
         manual_items = manual_by_index.get(index, [])
-        if case.get("status") == "manual_review":
-            status = "Техническая ошибка"
+        if case.get("status") == "failed":
+            status = "Ошибка проверки"
         elif case.get("manual_review_required"):
+            status = "Нужна проверка"
+        elif case.get("status") == "manual_review":
             status = "Нужна проверка"
         else:
             status = "Готово"
+        estimated_grade = case.get("estimated_grade")
+        if estimated_grade is None and case.get("scored_points") is not None and case.get("max_score"):
+            percent = float(case["scored_points"]) * 100 / float(case["max_score"])
+            estimated_grade = 5 if percent >= 70 else 4 if percent >= 50 else 3 if percent >= 30 else 2
+        grade = case.get("proposed_grade") if case.get("proposed_grade") is not None else estimated_grade
         criterion_ids = sorted({str(item.get("criterion_id")) for item in manual_items if item.get("criterion_id")})
         reasons = []
         for item in manual_items:
@@ -75,7 +82,8 @@ def build_teacher_roster(manifest: dict[str, Any], manual_payload: dict[str, Any
             "Итоговые баллы": case.get("proposed_total"),
             "Известно баллов": case.get("scored_points"),
             "Макс. баллов": case.get("max_score"),
-            "Оценка": case.get("proposed_grade"),
+            "Оценка": grade,
+            "Оценка примерная": bool(case.get("grade_is_estimate") or (grade is not None and case.get("proposed_grade") is None)),
             "Статус": status,
             "Критерии для проверки": ", ".join(criterion_ids),
             "Причина": " | ".join(reasons),

@@ -111,6 +111,8 @@ h3 { margin-bottom: 5px; font-size: 14px; }
 .student-name { font-weight: 750; font-size: 13px; }
 .student-group { margin-top: 4px; color: var(--muted); font-size: 11px; }
 .student-score { text-align: right; font-weight: 800; font-size: 14px; }
+.student-grade { display: block; font-size: 17px; color: var(--accent-dark); }
+.student-points { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; font-weight: 650; white-space: nowrap; }
 .student-state { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; font-weight: 650; white-space: nowrap; }
 .empty { padding: 28px 18px; text-align: center; color: var(--muted); line-height: 1.5; }
 
@@ -119,8 +121,9 @@ h3 { margin-bottom: 5px; font-size: 14px; }
 .detail-name { margin: 0 0 5px; font-size: 22px; letter-spacing: -0.03em; }
 .detail-sub { margin: 0; color: var(--muted); font-size: 12px; }
 .detail-score { text-align: right; }
-.big-score { font-size: 30px; font-weight: 850; letter-spacing: -0.06em; }
+.big-grade-value { font-size: 34px; font-weight: 850; letter-spacing: -0.04em; color: var(--accent-dark); }
 .big-grade { color: var(--accent-dark); font-size: 13px; font-weight: 800; }
+.score-support { margin-top: 4px; color: var(--muted); font-size: 11px; }
 .detail-body { padding: 18px 20px 24px; }
 .section-label { margin: 0 0 10px; color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
 .criterion { padding: 13px 0; border-top: 1px solid #edf0f2; }
@@ -139,6 +142,7 @@ h3 { margin-bottom: 5px; font-size: 14px; }
 .decision-select { width: 100%; min-height: 36px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: white; }
 .detail-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .save-note { min-height: 18px; margin: 9px 0 0; color: var(--success); font-size: 12px; text-align: right; }
+.detail-warning { padding: 13px 14px; margin-bottom: 18px; color: #7c4a03; background: var(--warning-soft); border: 1px solid #f3d58a; border-radius: 9px; line-height: 1.5; }
 .doc-link { color: var(--accent-dark); font-size: 12px; font-weight: 750; text-decoration: none; }
 .doc-link:hover { text-decoration: underline; }
 

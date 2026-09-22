@@ -164,6 +164,19 @@ def test_valid_uncertainty_is_not_retried_or_changed_to_points(work, status):
     assert summary['grade'] is None
 
 
+def test_partial_result_has_an_estimated_grade(work):
+    _, _, doc, comparison, criteria = work
+    def respond(payload, current, call):
+        current_criterion = current['criteria'][0]
+        return json.dumps({'results': [answer(current_criterion, status='completed')]})
+    http, local, posts = mock_transport(respond)
+    with http:
+        result = PerCriterionChecker(TemplateWorkChecker(local, comparison)).check(doc, criteria)
+    summary = cli._score_summary(criteria, result)
+    assert summary['estimated_grade'] == 5
+    assert summary['grade_is_estimate'] is False
+
+
 @pytest.mark.parametrize('payload', ['not JSON', '{"results": []}'])
 def test_second_validation_failure_aborts_without_fabrication(work, payload):
     _, _, doc, comparison, criteria = work

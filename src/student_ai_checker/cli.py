@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from student_ai_checker.ai import OllamaClient
 from student_ai_checker.config import Settings
 from student_ai_checker.documents import DocxExtractor
-from student_ai_checker.exceptions import StudentAICheckerError
+from student_ai_checker.exceptions import OllamaResponseError, StudentAICheckerError
 from student_ai_checker.grading import StudentWorkChecker
 from student_ai_checker.models import CriteriaSet, GradingResponse
 from student_ai_checker.documents.template import compare_template
@@ -129,6 +129,13 @@ def _score_summary(
     proposed_total = points if complete else None
     effective_scale = grade_scale or GradeScale.standard()
     proposed_grade = effective_scale.grade_for(points, maximum) if complete else None
+    criteria_by_id = criteria.by_id()
+    scored_maximum = float(sum(
+        Decimal(str(criteria_by_id[result.criterion_id].max_score))
+        for result in response.results
+        if result.proposed_score is not None
+    ))
+    estimated_grade = effective_scale.grade_for(points, scored_maximum) if scored_maximum > 0 else None
     manual_review_required = any(r.manual_review_required for r in response.results)
     automatic_final = automatic and complete and not manual_review_required
     return {
@@ -136,6 +143,9 @@ def _score_summary(
         "scored_points": points,
         "proposed_total": proposed_total,
         "proposed_grade": proposed_grade,
+        "estimated_grade": estimated_grade,
+        "grade_is_estimate": estimated_grade is not None and not complete,
+        "grade_basis": "all_criteria" if complete else ("scored_criteria" if estimated_grade is not None else "none"),
         "unresolved_count": len(criteria.criteria) - len(scores),
         "manual_review_required": manual_review_required,
         "teacher_confirmed": False,
@@ -169,6 +179,7 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
     LOGGER.info("Extracted %s evidence items (%s images) from %s", len(document.evidence), len(document.images), document.source_name)
     visual_checker = None
     checked_checker = None
+    criterion_mode = "checked_scoring" if args.checked_scoring else ("visual_review" if args.visual_review else ("per_criterion" if args.per_criterion else "all_at_once"))
     with OllamaClient(base_url=base_url, model=model, timeout_seconds=settings.ollama_timeout_seconds, num_ctx=settings.ollama_num_ctx) as ollama:
         checker = TemplateWorkChecker(ollama, comparison) if comparison else StudentWorkChecker(ollama)
         if args.checked_scoring:
@@ -181,11 +192,23 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
             LOGGER.info("Режим: по одному критерию; все допустимые доказательства сохраняются.")
             response = PerCriterionChecker(checker).check(document, criteria)
         else:
-            response = checker.check(document, criteria)
+            try:
+                response = checker.check(document, criteria)
+            except OllamaResponseError:
+                if not args.automatic or args.checked_scoring or args.visual_review:
+                    raise
+                LOGGER.warning(
+                    "Общий ответ модели не прошёл проверку; повторяем по отдельным критериям "
+                    "с сохранением корректных результатов."
+                )
+                criterion_mode = "per_criterion_resilient"
+                response = PerCriterionChecker(checker).check(
+                    document, criteria, tolerate_failures=True
+                )
     output = _resolved_output(document=document, criteria=criteria, response=response, model=model)
     output["inference_options"] = {
         "num_ctx": settings.ollama_num_ctx,
-        "criterion_mode": "checked_scoring" if args.checked_scoring else ("visual_review" if args.visual_review else ("per_criterion" if args.per_criterion else "all_at_once")),
+        "criterion_mode": criterion_mode,
     }
     if visual_checker is not None:
         output["visual_review"] = {

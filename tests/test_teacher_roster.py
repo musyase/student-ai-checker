@@ -25,3 +25,15 @@ def test_roster_sorts_by_group_then_surname_and_explains_manual_review():
     assert rows[1]["Статус"] == "Нужна проверка"
     assert rows[1]["Критерии для проверки"] == "pr1.summary"
 
+
+def test_roster_shows_estimated_grade_for_partial_result():
+    rows = build_teacher_roster({"cases": [{
+        "index": 1, "group": "24ИСИП-9-2", "source_name": "Иванов ПР2.docx",
+        "source_relative_path": "Иванов.docx", "status": "completed",
+        "proposed_total": None, "scored_points": 120, "max_score": 165,
+        "proposed_grade": None, "estimated_grade": 4, "grade_is_estimate": True,
+        "manual_review_required": True,
+    }]}, {"items": []})
+    assert rows[0]["Оценка"] == 4
+    assert rows[0]["Оценка примерная"] is True
+    assert rows[0]["Статус"] == "Нужна проверка"

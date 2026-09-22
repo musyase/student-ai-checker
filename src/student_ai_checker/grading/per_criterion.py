@@ -8,8 +8,14 @@ from __future__ import annotations
 
 import logging
 
-from student_ai_checker.exceptions import StudentAICheckerError
-from student_ai_checker.models import CriteriaSet, CriterionResult, ExtractedDocument, GradingResponse
+from student_ai_checker.exceptions import OllamaResponseError, StudentAICheckerError
+from student_ai_checker.models import (
+    CriteriaSet,
+    CriterionResult,
+    CriterionStatus,
+    ExtractedDocument,
+    GradingResponse,
+)
 
 from .checker import StudentWorkChecker
 from .validator import GradingValidator
@@ -29,7 +35,13 @@ class PerCriterionChecker:
     def __init__(self, checker: StudentWorkChecker) -> None:
         self.checker = checker
 
-    def check(self, document: ExtractedDocument, criteria: CriteriaSet) -> GradingResponse:
+    def check(
+        self,
+        document: ExtractedDocument,
+        criteria: CriteriaSet,
+        *,
+        tolerate_failures: bool = False,
+    ) -> GradingResponse:
         # Work from an independent snapshot; never alter the approved input set.
         snapshot = criteria.model_copy(deep=True)
         results: list[CriterionResult] = []
@@ -42,7 +54,26 @@ class PerCriterionChecker:
             )
             try:
                 response = self.checker.check(document, single)
-            except StudentAICheckerError:
+            except StudentAICheckerError as exc:
+                if tolerate_failures and isinstance(exc, OllamaResponseError) and document.evidence_ids:
+                    LOGGER.warning(
+                        "Критерий %s не удалось проверить после повторной попытки; "
+                        "сохраняем его без балла для ручной проверки.",
+                        criterion.id,
+                    )
+                    results.append(CriterionResult(
+                        criterion_id=criterion.id,
+                        title=criterion.title,
+                        max_score=criterion.max_score,
+                        proposed_score=None,
+                        status=CriterionStatus.UNABLE_TO_CHECK,
+                        explanation="Локальная модель не вернула проверяемый ответ по этому критерию.",
+                        evidence_ids=[sorted(document.evidence_ids)[0]],
+                        student_feedback="",
+                        manual_review_required=True,
+                        manual_review_reason="Критерий не удалось автоматически проверить; требуется решение преподавателя.",
+                    ))
+                    continue
                 LOGGER.error(
                     "Проверка остановлена на критерии %d/%d; "
                     "ошибка не заменяется нулём, общий результат не сформирован.",
