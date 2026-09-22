@@ -51,6 +51,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Зафиксировать полностью определённый результат автоматически без подтверждения преподавателя.",
     )
+    check.add_argument(
+        "--best-effort",
+        action="store_true",
+        help="Вынести автоматическое наиболее вероятное решение по каждому критерию без null-результатов.",
+    )
     check.add_argument("--model", help="Имя локальной модели Ollama")
     check.add_argument("--ollama-url", help="URL локального Ollama")
     batch = subcommands.add_parser("batch", help="Проверить папку работ по одному заданию")
@@ -181,7 +186,11 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
     checked_checker = None
     criterion_mode = "checked_scoring" if args.checked_scoring else ("visual_review" if args.visual_review else ("per_criterion" if args.per_criterion else "all_at_once"))
     with OllamaClient(base_url=base_url, model=model, timeout_seconds=settings.ollama_timeout_seconds, num_ctx=settings.ollama_num_ctx) as ollama:
-        checker = TemplateWorkChecker(ollama, comparison) if comparison else StudentWorkChecker(ollama)
+        checker = (
+            TemplateWorkChecker(ollama, comparison, best_effort=args.best_effort)
+            if comparison
+            else StudentWorkChecker(ollama, best_effort=args.best_effort)
+        )
         if args.checked_scoring:
             checked_checker = CheckedScoringChecker(ollama, comparison)
             response = checked_checker.check(document, criteria)
@@ -209,6 +218,7 @@ def _run_check(args: argparse.Namespace, settings: Settings) -> int:
     output["inference_options"] = {
         "num_ctx": settings.ollama_num_ctx,
         "criterion_mode": criterion_mode,
+        "best_effort": args.best_effort,
     }
     if visual_checker is not None:
         output["visual_review"] = {

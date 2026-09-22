@@ -67,6 +67,28 @@ def _valid_response(evidence_id: str) -> str:
     )
 
 
+def _unresolved_response(evidence_id: str) -> str:
+    return json.dumps(
+        {
+            "results": [
+                {
+                    "criterion_id": "c1",
+                    "title": "Проблема и решение",
+                    "max_score": 2,
+                    "proposed_score": None,
+                    "status": "insufficient_evidence",
+                    "explanation": "Нужна более полная связка доказательств.",
+                    "evidence_ids": [evidence_id],
+                    "student_feedback": "",
+                    "manual_review_required": True,
+                    "manual_review_reason": "Недостаточно подтверждений.",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+
 def test_checker_retries_once_after_unknown_evidence(sample_docx) -> None:
     document = DocxExtractor().extract(sample_docx)
     valid_id = "DOC1:T:0001:R:0001:C:0002"
@@ -79,6 +101,22 @@ def test_checker_retries_once_after_unknown_evidence(sample_docx) -> None:
     )
     assert stub.calls == 2
     assert response.results[0].evidence_ids == [valid_id]
+
+
+def test_best_effort_retries_a_null_score_until_it_has_a_decision(sample_docx) -> None:
+    document = DocxExtractor().extract(sample_docx)
+    valid_id = "DOC1:T:0001:R:0001:C:0002"
+    stub = OllamaStub([
+        _unresolved_response(valid_id),
+        _valid_response(valid_id),
+    ])
+    response = StudentWorkChecker(stub, best_effort=True).check(  # type: ignore[arg-type]
+        document,
+        _criteria(),
+    )
+    assert stub.calls == 2
+    assert "BEST-EFFORT AUTOMATIC MODE" in stub.requests[0]["system_prompt"]
+    assert response.results[0].proposed_score == 2
 
 
 def test_checker_repair_prompt_contains_pydantic_failure(sample_docx) -> None:

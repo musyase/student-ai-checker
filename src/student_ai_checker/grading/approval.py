@@ -26,6 +26,7 @@ class ApprovalRecord(BaseModel):
     criteria_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     template_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     grade_scale: GradeScale = Field(default_factory=GradeScale.standard)
+    profile_policy_version: int = Field(default=1, ge=1)
 
     @field_validator("grade_scale", mode="before")
     @classmethod

@@ -16,7 +16,7 @@ from pathlib import Path
 from student_ai_checker.teacher_roster import write_teacher_roster_csv
 
 
-BATCH_CACHE_VERSION = 3
+BATCH_CACHE_VERSION = 4
 ASSIGNMENT_MARKER_RE = re.compile(r"(?:практическ\w*|пр\s*[._№-]?\s*0*\d+)", re.IGNORECASE)
 
 
@@ -44,6 +44,11 @@ def parse_args() -> argparse.Namespace:
         "--automatic",
         action="store_true",
         help="Finalize complete scores without teacher confirmation.",
+    )
+    parser.add_argument(
+        "--best-effort",
+        action="store_true",
+        help="Require a numeric best-effort decision for every criterion.",
     )
     return parser.parse_args()
 
@@ -166,7 +171,7 @@ def file_sha256(path: Path) -> str:
 
 def cache_key(document: Path, template: Path, criteria: Path, approval: Path,
               model: str, *, generic_scoring: bool = False,
-              automatic: bool = False) -> str:
+              automatic: bool = False, best_effort: bool = False) -> str:
     payload = {
         "version": BATCH_CACHE_VERSION,
         "document": file_sha256(document),
@@ -176,6 +181,7 @@ def cache_key(document: Path, template: Path, criteria: Path, approval: Path,
         "model": model,
         "generic_scoring": generic_scoring,
         "automatic": automatic,
+        "best_effort": best_effort,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -225,7 +231,7 @@ def fill_record_from_result(record: dict, result_path: Path) -> dict:
 def run_case(index: int, file_path: Path, *, source: Path, template: Path,
              criteria: Path, approval: Path, output: Path, cache_root: Path,
              repo_root: Path, env: dict[str, str], practice: str, model: str,
-             generic_scoring: bool, automatic: bool) -> dict:
+             generic_scoring: bool, automatic: bool, best_effort: bool) -> dict:
     group_dir = output / file_path.parent.name
     group_dir.mkdir(parents=True, exist_ok=True)
     stamp = f"{index:03d}"
@@ -235,6 +241,7 @@ def run_case(index: int, file_path: Path, *, source: Path, template: Path,
     key = cache_key(
         file_path, template, criteria, approval, model,
         generic_scoring=generic_scoring, automatic=automatic,
+        best_effort=best_effort,
     )
     record = result_record(index, file_path, source, output, result_path, key, practice)
     cached_result = cache_root / f"{key}.result.json"
@@ -251,6 +258,7 @@ def run_case(index: int, file_path: Path, *, source: Path, template: Path,
         "--criteria", str(criteria), "--approval", str(approval),
         *( [] if generic_scoring else ["--checked-scoring"] ),
         "--output", str(result_path), "--model", model,
+        *( ["--best-effort"] if best_effort else [] ),
         *( ["--automatic"] if automatic else [] ),
     ]
     try:
@@ -321,6 +329,7 @@ def main() -> int:
         index: cache_key(
             file_path, template, criteria, approval, args.model,
             generic_scoring=args.generic_scoring, automatic=args.automatic,
+            best_effort=args.best_effort,
         )
         for index, file_path in enumerate(files, 1)
     }
@@ -361,6 +370,7 @@ def main() -> int:
                 practice=args.practice, model=args.model,
                 generic_scoring=args.generic_scoring,
                 automatic=args.automatic,
+                best_effort=args.best_effort,
             ): (index, file_path)
             for index, file_path in pending
         }

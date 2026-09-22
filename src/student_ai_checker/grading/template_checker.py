@@ -45,8 +45,18 @@ class TemplateGradingValidator(GradingValidator):
 
 
 class TemplateWorkChecker(StudentWorkChecker):
-    def __init__(self, ollama: OllamaClient, comparison: TemplateComparison) -> None:
-        super().__init__(ollama, TemplateGradingValidator(comparison))
+    def __init__(
+        self,
+        ollama: OllamaClient,
+        comparison: TemplateComparison,
+        *,
+        best_effort: bool = False,
+    ) -> None:
+        super().__init__(
+            ollama,
+            TemplateGradingValidator(comparison),
+            best_effort=best_effort,
+        )
         self.comparison = comparison
 
     def check(self, document: ExtractedDocument, criteria: CriteriaSet) -> GradingResponse:
@@ -64,8 +74,10 @@ TEMPLATE MODE:
 к рисунку вместо выполненного задания. Скобки вокруг заполненного ответа допустимы.
 document_metadata подтверждает только разбор файла, но не выполнение критерия.
 Для положительного балла нужна ссылка на содержательный ответ разрешённого типа.
-При действительно отсутствующем ответе можно сослаться на DOC1:META:0001;
-не используй это для положительного балла. Неизвестный/нечитаемый результат —
-insufficient_evidence или unable_to_check, null, ручная проверка с причиной.
+При действительно отсутствующем ответе можно сослаться на DOC1:META:0001.
+В автоматическом best-effort режиме описание результата в отчёте также является
+содержательным ответом: не требуй отдельного исходного файла, если задание проверяется
+по отчёту. Неизвестный результат оцени наиболее вероятным разрешённым баллом, а не null,
+если файл прочитан и в нём есть материал работы.
 completed означает полный балл; partially_completed — промежуточный; not_completed — 0.
 """ + warning

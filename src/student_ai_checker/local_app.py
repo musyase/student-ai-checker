@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import httpx
 
 from student_ai_checker.batch import resolve_assignment_profile
-from student_ai_checker.auto_profile import generate_auto_profile
+from student_ai_checker.auto_profile import AUTO_PROFILE_POLICY_VERSION, generate_auto_profile
 from student_ai_checker.config import Settings
 from student_ai_checker.documents.docx_extractor import sha256_file
 from student_ai_checker.exceptions import StudentAICheckerError
@@ -197,6 +197,8 @@ class LocalApp:
             approval = json_file(Path(profile.approval), {})
             if not isinstance(approval, dict) or approval.get("approval_mode") != "automatic":
                 return False
+            if approval.get("profile_policy_version") != AUTO_PROFILE_POLICY_VERSION:
+                return True
             criteria = self._load_criteria(profile.criteria)
             verify_approval(
                 profile.approval,
@@ -226,6 +228,9 @@ class LocalApp:
             command.append("--resume")
         if run.get("profile_mode") == "automatic":
             command.append("--generic-scoring")
+        # The desktop workflow is intentionally fully automatic: an incomplete
+        # proof should receive the model's best estimate, not an empty score.
+        command.append("--best-effort")
         command.append("--automatic")
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"

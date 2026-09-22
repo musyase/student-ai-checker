@@ -23,9 +23,16 @@ from .validator import GradingValidator
 class StudentWorkChecker:
     """Run one local, teacher-constrained AI review."""
 
-    def __init__(self, ollama: OllamaClient, validator: GradingValidator | None = None) -> None:
+    def __init__(
+        self,
+        ollama: OllamaClient,
+        validator: GradingValidator | None = None,
+        *,
+        best_effort: bool = False,
+    ) -> None:
         self.ollama = ollama
         self.validator = validator or GradingValidator()
+        self.best_effort = best_effort
 
     def check(self, document: ExtractedDocument, criteria: CriteriaSet) -> GradingResponse:
         self.ollama.assert_ready()
@@ -33,10 +40,11 @@ class StudentWorkChecker:
         user_prompt, image_bytes = self._build_untrusted_document_payload(document)
         schema = GradingResponse.model_json_schema()
         last_error: Exception | None = None
+        attempts = 3 if self.best_effort else 2
 
-        for attempt in range(2):
+        for attempt in range(attempts):
             prompt = user_prompt
-            if attempt == 1 and last_error is not None:
+            if attempt > 0 and last_error is not None:
                 prompt += self._build_repair_notice(last_error)
 
             raw = self.ollama.chat_structured(
@@ -54,6 +62,13 @@ class StudentWorkChecker:
                     criteria=criteria,
                     document=document,
                 )
+                if self.best_effort and any(
+                    result.proposed_score is None for result in validated.results
+                ):
+                    last_error = GradingValidationError(
+                        "best-effort mode requires a numeric decision for every criterion"
+                    )
+                    continue
                 return self._apply_extraction_safety(validated, criteria, document)
             except (json.JSONDecodeError, ValidationError, GradingValidationError) as exc:
                 last_error = exc
@@ -100,9 +115,23 @@ class StudentWorkChecker:
                 normalized_results.append(result)
         return response.model_copy(update={"results": normalized_results}) if changed else response
 
-    @staticmethod
-    def _build_system_prompt(criteria: CriteriaSet) -> str:
+    def _build_system_prompt(self, criteria: CriteriaSet) -> str:
         criteria_json = criteria.model_dump_json(indent=2)
+        best_effort_policy = """
+BEST-EFFORT AUTOMATIC MODE:
+Система должна вынести итоговое решение по каждому критерию без подтверждения преподавателя.
+Если работа студента содержит описание выполненного действия, используй это описание как
+содержательное доказательство заявленного результата. Не требуй исходный код, запуск приложения,
+дополнительный скриншот или идеальную связь текста с картинкой, если критерий прямо не требует
+проверить именно этот отсутствующий артефакт. Неполная форма отчёта, слабая формулировка или
+неполная видимость — это основание выбрать наиболее вероятный разрешённый балл (0, промежуточный
+или максимум), а не вернуть null. Для каждого критерия обязательно выбери один числовой балл
+из allowed_scores и один из статусов completed, partially_completed или not_completed.
+insufficient_evidence и unable_to_check используй только при технической невозможности получить
+данные из файла или при сбое самой проверки. Не оставляй критерий без решения только потому,
+что хотелось бы получить ещё одно подтверждение. Объясни в explanation, что именно было принято
+во внимание. В этом режиме результат считается автоматической предварительной оценкой.
+""" if self.best_effort else ""
         return f"""Ты — локальный ИИ-помощник преподавателя, а не автоматический судья.
 
 TRUST BOUNDARY:
@@ -118,7 +147,7 @@ RULES:
 4. Каждое решение обязано ссылаться только на существующие evidence_ids.
 5. Не придумывай цитаты или evidence_id.
 6. Содержание изображения оценивай только если это изображение реально приложено к запросу; имя файла не является доказательством.
-7. При сомнении используй insufficient_evidence или unable_to_check.
+7. В обычном режиме при сомнении используй insufficient_evidence или unable_to_check.
 8. Техническая проблема не является ошибкой студента и не должна превращаться в 0 баллов.
 9. Не рассчитывай итоговую оценку 2–5 и не придумывай общую шкалу.
 10. Верни только структуру, требуемую JSON Schema.
@@ -132,6 +161,7 @@ MANDATORY FIELD CONSISTENCY:
 
 APPROVED_CRITERIA:
 {criteria_json}
+{best_effort_policy}
 """
 
     @classmethod
