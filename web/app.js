@@ -53,7 +53,8 @@ function gradeText(row) {
 function gradeForSummary(summary) {
   if (summary.estimated_grade != null) return summary.estimated_grade;
   if (summary.proposed_grade != null) return summary.proposed_grade;
-  if (summary.scored_points == null || !summary.max_score) return null;
+  // 0/165 may mean "no criterion was checked", not a real failing score.
+  if (summary.scored_points == null || Number(summary.scored_points) <= 0 || !summary.max_score) return null;
   const percent = Number(summary.scored_points) * 100 / Number(summary.max_score);
   return percent >= 70 ? 5 : percent >= 50 ? 4 : percent >= 30 ? 3 : 2;
 }

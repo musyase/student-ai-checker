@@ -125,6 +125,8 @@ class LocalApp:
             "completed_count": manifest.get("completed_count", 0),
             "manual_review_count": manifest.get("manual_review_count", 0),
             "failed_count": manifest.get("failed_count", 0),
+            "unclassified_count": manifest.get("discovery", {}).get("unclassified_count", 0),
+            "unclassified_files": manifest.get("discovery", {}).get("unclassified_files", []),
             "created_at": run.get("created_at"),
         }
 

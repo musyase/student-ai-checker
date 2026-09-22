@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 from pathlib import Path
 
 import pytest
 
 from student_ai_checker.batch import assignment_key, resolve_assignment_profile
 from student_ai_checker.exceptions import StudentAICheckerError
+
+
+_BATCH_SCRIPT = Path(__file__).parents[1] / "scripts" / "run_checked_batch.py"
+_BATCH_SPEC = importlib.util.spec_from_file_location("run_checked_batch", _BATCH_SCRIPT)
+assert _BATCH_SPEC and _BATCH_SPEC.loader
+_BATCH = importlib.util.module_from_spec(_BATCH_SPEC)
+_BATCH_SPEC.loader.exec_module(_BATCH)
 
 
 @pytest.mark.parametrize("name", ["ПР1.docx", "Практическая №1.docx", "Практическая работа 1.docx"])
@@ -40,3 +48,8 @@ def test_profile_registry_resolves_approved_files(tmp_path: Path):
 def test_missing_profile_explains_one_time_setup(tmp_path: Path):
     with pytest.raises(StudentAICheckerError, match="нет утверждённого профиля"):
         resolve_assignment_profile(Path("ПР2.docx"), tmp_path)
+
+
+@pytest.mark.parametrize("name", ["асташоваПР2.docx", "Дашкова и ОстапенкоПР2.docx", "ПР02_Антонян.docx"])
+def test_batch_discovery_accepts_practice_marker_without_separator(name: str):
+    assert _BATCH.practice_pattern("2").search(name)

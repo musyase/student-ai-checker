@@ -65,7 +65,10 @@ def build_teacher_roster(manifest: dict[str, Any], manual_payload: dict[str, Any
         else:
             status = "Готово"
         estimated_grade = case.get("estimated_grade")
-        if estimated_grade is None and case.get("scored_points") is not None and case.get("max_score"):
+        # A zero here can mean that the model did not return a score at all.
+        # It must not be converted into a failing grade of 2.
+        if (estimated_grade is None and case.get("scored_points") is not None
+                and float(case.get("scored_points") or 0) > 0 and case.get("max_score")):
             percent = float(case["scored_points"]) * 100 / float(case["max_score"])
             estimated_grade = 5 if percent >= 70 else 4 if percent >= 50 else 3 if percent >= 30 else 2
         grade = case.get("proposed_grade") if case.get("proposed_grade") is not None else estimated_grade

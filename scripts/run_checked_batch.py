@@ -17,6 +17,7 @@ from student_ai_checker.teacher_roster import write_teacher_roster_csv
 
 
 BATCH_CACHE_VERSION = 3
+ASSIGNMENT_MARKER_RE = re.compile(r"(?:практическ\w*|пр\s*[._№-]?\s*0*\d+)", re.IGNORECASE)
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,8 +55,10 @@ def practice_pattern(practice: str) -> re.Pattern[str]:
     number = str(int(normalized))
     return re.compile(
         rf"(?:практическ\w*\s*(?:работ\w*\s*)?(?:№\s*)?0?{number}|"
-        rf"(?<![^\W_])пр\s*[._№-]?\s*0?{number}(?![0-9])|"
-        rf"(?<![^\W_])п\s*0?{number}(?![0-9]))",
+        # Student names are often written as ``ИвановПР2`` without a
+        # separator.  The old look-behind rejected those valid filenames.
+        rf"пр\s*[._№-]?\s*0?{number}(?![0-9])|"
+        rf"п\s*0?{number}(?![0-9]))",
         re.IGNORECASE,
     )
 
@@ -65,7 +68,9 @@ def utc_now() -> str:
 
 
 def write_manifest(path: Path, source: Path, practice: str, model: str,
-                   records: list[dict], *, workers: int, cache_root: Path) -> None:
+                   records: list[dict], *, workers: int, cache_root: Path,
+                   discovered_count: int | None = None,
+                   unclassified_files: list[str] | None = None) -> None:
     payload = {
         "schema_version": 2,
         "generated_at": utc_now(),
@@ -75,7 +80,12 @@ def write_manifest(path: Path, source: Path, practice: str, model: str,
         "workers": workers,
         "cache_root": str(cache_root),
         "cache_version": BATCH_CACHE_VERSION,
-        "case_count": len(records),
+        "discovery": {
+            "matched_count": discovered_count if discovered_count is not None else len(records),
+            "unclassified_count": len(unclassified_files or []),
+            "unclassified_files": unclassified_files or [],
+        },
+        "case_count": discovered_count if discovered_count is not None else len(records),
         "completed_count": sum(record["status"] == "completed" for record in records),
         "manual_review_count": sum(record["status"] == "manual_review" for record in records),
         "failed_count": sum(record["status"] == "failed" for record in records),
@@ -289,7 +299,7 @@ def main() -> int:
     pattern = practice_pattern(args.practice)
     files = sorted(
         (path for path in source.rglob("*.docx")
-         if path.is_file() and path.resolve() != template and path.parent != source
+         if path.is_file() and path.resolve() != template
          and pattern.search(path.name)),
         key=lambda path: str(path).casefold(),
     )
@@ -297,6 +307,15 @@ def main() -> int:
         files = files[: args.limit]
     if not files:
         raise SystemExit(f"No explicitly named student DOCX files found for PR{args.practice}.")
+    all_student_docx = sorted(
+        (path for path in source.rglob("*.docx")
+         if path.is_file() and path.resolve() != template and path.parent != source),
+        key=lambda path: str(path).casefold(),
+    )
+    unclassified_files = [
+        str(path.relative_to(source)) for path in all_student_docx
+        if not ASSIGNMENT_MARKER_RE.search(path.name)
+    ]
 
     expected_keys = {
         index: cache_key(
@@ -355,13 +374,15 @@ def main() -> int:
                 manifest_path, source, args.practice, args.model,
                 [records_by_index[i] for i in sorted(records_by_index)],
                 workers=args.workers, cache_root=cache_root,
+                discovered_count=len(files), unclassified_files=unclassified_files,
             )
 
     records = [records_by_index[i] for i in sorted(records_by_index)]
     completed_count = sum(record["status"] == "completed" for record in records)
     failed_count = sum(record["status"] == "failed" for record in records)
     write_manifest(manifest_path, source, args.practice, args.model, records,
-                   workers=args.workers, cache_root=cache_root)
+                   workers=args.workers, cache_root=cache_root,
+                   discovered_count=len(files), unclassified_files=unclassified_files)
     print(f"Completed: {completed_count}/{len(files)}; failed: {failed_count}; workers: {args.workers}", flush=True)
     return 0 if failed_count == 0 else 2
 
