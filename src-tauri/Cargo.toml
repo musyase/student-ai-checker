@@ -1,6 +1,6 @@
 [package]
 name = "student-ai-checker-desktop"
-version = "0.1.9"
+version = "0.1.10"
 description = "Local teacher workspace for Student AI Checker"
 authors = ["Student AI Checker contributors"]
 edition = "2021"

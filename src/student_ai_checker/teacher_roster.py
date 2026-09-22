@@ -72,6 +72,12 @@ def build_teacher_roster(manifest: dict[str, Any], manual_payload: dict[str, Any
             percent = float(case["scored_points"]) * 100 / float(case["max_score"])
             estimated_grade = 5 if percent >= 70 else 4 if percent >= 50 else 3 if percent >= 30 else 2
         grade = case.get("proposed_grade") if case.get("proposed_grade") is not None else estimated_grade
+        scored_points = case.get("scored_points")
+        # A manual case with no proposed total and zero scored points has no
+        # numeric result. Keep it blank instead of displaying misleading 0.
+        if (case.get("proposed_total") is None and case.get("manual_review_required")
+                and float(scored_points or 0) == 0):
+            scored_points = None
         criterion_ids = sorted({str(item.get("criterion_id")) for item in manual_items if item.get("criterion_id")})
         reasons = []
         for item in manual_items:
@@ -83,7 +89,7 @@ def build_teacher_roster(manifest: dict[str, Any], manual_payload: dict[str, Any
             "Фамилия / студенты": label,
             "Сортировка": sort_surname(label),
             "Итоговые баллы": case.get("proposed_total"),
-            "Известно баллов": case.get("scored_points"),
+            "Известно баллов": scored_points,
             "Макс. баллов": case.get("max_score"),
             "Оценка": grade,
             "Оценка примерная": bool(case.get("grade_is_estimate") or (grade is not None and case.get("proposed_grade") is None)),

@@ -59,6 +59,17 @@ function gradeForSummary(summary) {
   return percent >= 70 ? 5 : percent >= 50 ? 4 : percent >= 30 ? 3 : 2;
 }
 
+function pointsText(row) {
+  const maximum = row["Макс. баллов"] ?? "—";
+  const noNumericResult = row["Итоговые баллы"] == null
+    && row["Статус"] === "Нужна проверка"
+    && Number(row["Известно баллов"] || 0) === 0;
+  if (noNumericResult) return `—/${maximum}`;
+  return row["Итоговые баллы"] == null
+    ? `${row["Известно баллов"] ?? "—"}/${maximum}`
+    : `${row["Итоговые баллы"]}/${maximum}`;
+}
+
 function render() {
   const run = state.activeRun;
   const summary = run ? run : null;
@@ -98,7 +109,7 @@ function renderRun(run, summary) {
 
 function renderStudentRow(row) {
   const selected = state.selectedIndex === row["Индекс"];
-  const points = row["Итоговые баллы"] == null ? `${row["Известно баллов"] ?? "—"}/${row["Макс. баллов"] ?? "—"}` : `${row["Итоговые баллы"]}/${row["Макс. баллов"]}`;
+  const points = pointsText(row);
   return `<button class="student-row ${selected ? "selected" : ""}" data-student="${row["Индекс"]}"><span><span class="student-name">${escapeHtml(row["Фамилия / студенты"])}</span><span class="student-group">${escapeHtml(row["Группа"])}</span></span><span class="student-score"><span class="student-grade">${escapeHtml(gradeText(row))}</span><span class="student-points">${escapeHtml(points)} баллов</span><span class="student-state">${escapeHtml(row["Статус"])}</span></span></button>`;
 }
 
@@ -116,9 +127,13 @@ function renderDetail(payload) {
   const grade = automaticDone ? (summary.final_grade ?? summary.proposed_grade) : (reviewDone ? summary.final_grade : gradeForSummary(summary));
   const approximate = !reviewDone && summary.grade_is_estimate;
   const decisionLabel = automaticDone ? "Выставлено автоматически" : (reviewDone ? "Подтверждено преподавателем" : "Решение преподавателя");
-  const points = total ?? summary.scored_points;
+  const noNumericResult = !reviewDone && summary.proposed_total == null
+    && Number(summary.scored_points || 0) === 0;
+  const points = noNumericResult ? null : (total ?? summary.scored_points);
   const gradeLabel = reviewDone ? `${decisionLabel}: ${grade}` : (grade ? `${approximate ? "Примерная оценка" : "Предварительная оценка"}: ${grade}` : "Оценка пока не определена");
-  return `<div class="detail-head"><div><h2 class="detail-name">${escapeHtml(row["Фамилия / студенты"] || payload.case.source_name)}</h2><p class="detail-sub">${escapeHtml(row["Группа"])} · <a class="doc-link" href="${apiUrl(payload.document_url)}" target="_blank">Открыть исходный DOCX</a></p></div><div class="detail-score"><div class="big-grade-value">${grade == null ? "—" : `${approximate ? "≈ " : ""}${grade}`}</div><div class="big-grade">${escapeHtml(gradeLabel)}</div><div class="score-support">${points ?? "—"}/${summary.max_score ?? payload.case.max_score ?? "—"} баллов</div></div></div><div class="detail-body"><p class="section-label">Критерии и доказательства</p>${(result.results || []).map((criterion) => renderCriterion(criterion, criteriaMap[criterion.criterion_id])).join("")}<div class="review-box"><p class="section-label">${escapeHtml(decisionLabel)}</p>${(result.results || []).map((criterion) => renderDecision(criterion, criteriaMap[criterion.criterion_id], reviewDone)).join("")}<div class="detail-actions"><button class="button primary" id="save-review">Сохранить решение</button></div><p class="save-note" id="save-note"></p></div></div>`;
+  const support = `${points ?? "—"}/${summary.max_score ?? payload.case.max_score ?? "—"} баллов`;
+  const supportNote = noNumericResult ? "Баллы не определены — это не ноль." : support;
+  return `<div class="detail-head"><div><h2 class="detail-name">${escapeHtml(row["Фамилия / студенты"] || payload.case.source_name)}</h2><p class="detail-sub">${escapeHtml(row["Группа"])} · <a class="doc-link" href="${apiUrl(payload.document_url)}" target="_blank">Открыть исходный DOCX</a></p></div><div class="detail-score"><div class="big-grade-value">${grade == null ? "—" : `${approximate ? "≈ " : ""}${grade}`}</div><div class="big-grade">${escapeHtml(gradeLabel)}</div><div class="score-support">${escapeHtml(supportNote)}</div></div></div><div class="detail-body"><p class="section-label">Критерии и доказательства</p>${(result.results || []).map((criterion) => renderCriterion(criterion, criteriaMap[criterion.criterion_id])).join("")}<div class="review-box"><p class="section-label">${escapeHtml(decisionLabel)}</p>${(result.results || []).map((criterion) => renderDecision(criterion, criteriaMap[criterion.criterion_id], reviewDone)).join("")}<div class="detail-actions"><button class="button primary" id="save-review">Сохранить решение</button></div><p class="save-note" id="save-note"></p></div></div>`;
 }
 
 function renderCriterion(criterion) {

@@ -48,4 +48,5 @@ def test_roster_does_not_turn_unchecked_work_into_grade_two():
         "manual_review_required": True,
     }]}, {"items": []})
     assert rows[0]["Оценка"] is None
+    assert rows[0]["Известно баллов"] is None
     assert rows[0]["Статус"] == "Нужна проверка"

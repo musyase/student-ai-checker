@@ -1,7 +1,7 @@
 {
   "name": "student-ai-checker-desktop",
   "private": true,
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Local teacher workspace for Student AI Checker",
   "scripts": {
     "tauri": "tauri",
