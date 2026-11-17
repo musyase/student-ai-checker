@@ -117,7 +117,7 @@ class LocalApp:
             "id": run["id"],
             "profile": run.get("profile"),
             "profile_mode": run.get("profile_mode", "existing"),
-            "folder": run.get("folder"),
+            "folder": "Вымышленные работы" if run.get("demo") else run.get("folder"),
             "assignment": run.get("assignment"),
             "output_root": run.get("output_root"),
             "status": self.run_status(run),
@@ -128,6 +128,7 @@ class LocalApp:
             "unclassified_count": manifest.get("discovery", {}).get("unclassified_count", 0),
             "unclassified_files": manifest.get("discovery", {}).get("unclassified_files", []),
             "created_at": run.get("created_at"),
+            "demo": bool(run.get("demo")),
         }
 
     def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:

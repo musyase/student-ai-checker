@@ -77,11 +77,12 @@ function render() {
     <header class="app-header">
       <div class="brand"><div class="brand-mark">SA</div><div><div class="brand-name">Student AI Checker</div><div class="brand-subtitle">локальное рабочее место преподавателя</div></div></div>
       <div class="header-actions">
-        <div class="health"><span class="health-dot ${state.health?.ollama && state.health?.model_available ? "ok" : state.health ? "bad" : ""}"></span>${state.health ? (state.health.ollama ? (state.health.model_available ? "Ollama готова" : `Модель ${escapeHtml(state.health.model)} не найдена`) : "Ollama недоступна") : "Проверяем Ollama"}</div>
+        <div class="health"><span class="health-dot ${run?.demo || (state.health?.ollama && state.health?.model_available) ? "ok" : state.health ? "bad" : ""}"></span>${run?.demo ? "Синтетическое демо" : state.health ? (state.health.ollama ? (state.health.model_available ? "Ollama готова" : `Модель ${escapeHtml(state.health.model)} не найдена`) : "Ollama недоступна") : "Проверяем Ollama"}</div>
       </div>
     </header>
     <main class="app-shell">
       <div class="page-intro"><div><p class="eyebrow">Панель проверки</p><h1>Разберите работы по порядку</h1><p class="intro-copy">Запустите проверку, отфильтруйте нужную группу и пройдите только те критерии, где системе не хватило подтверждений.</p></div>${run ? '<button class="button secondary" id="new-run">Новая проверка</button>' : ""}</div>
+      ${run?.demo ? '<div class="demo-notice">Демонстрационные данные: работы, доказательства и баллы придуманы для знакомства с интерфейсом. Ollama при подготовке демо не запускалась.</div>' : ""}
       ${state.error ? `<div class="form-error">${escapeHtml(state.error)}</div>` : ""}
       ${state.notice ? `<div class="notice">${escapeHtml(state.notice)}</div>` : ""}
       ${run ? renderRun(run, summary) : renderSetup()}
@@ -133,7 +134,7 @@ function renderDetail(payload) {
   const gradeLabel = reviewDone ? `${decisionLabel}: ${grade}` : (grade ? `${approximate ? "Примерная оценка" : "Предварительная оценка"}: ${grade}` : "Оценка пока не определена");
   const support = `${points ?? "—"}/${summary.max_score ?? payload.case.max_score ?? "—"} баллов`;
   const supportNote = noNumericResult ? "Баллы не определены — это не ноль." : support;
-  return `<div class="detail-head"><div><h2 class="detail-name">${escapeHtml(row["Фамилия / студенты"] || payload.case.source_name)}</h2><p class="detail-sub">${escapeHtml(row["Группа"])} · <a class="doc-link" href="${apiUrl(payload.document_url)}" target="_blank">Открыть исходный DOCX</a></p></div><div class="detail-score"><div class="big-grade-value">${grade == null ? "—" : `${approximate ? "≈ " : ""}${grade}`}</div><div class="big-grade">${escapeHtml(gradeLabel)}</div><div class="score-support">${escapeHtml(supportNote)}</div></div></div><div class="detail-body"><p class="section-label">Критерии и доказательства</p>${(result.results || []).map((criterion) => renderCriterion(criterion, criteriaMap[criterion.criterion_id])).join("")}<div class="review-box"><p class="section-label">${escapeHtml(decisionLabel)}</p>${(result.results || []).map((criterion) => renderDecision(criterion, criteriaMap[criterion.criterion_id], reviewDone)).join("")}<div class="detail-actions"><button class="button primary" id="save-review">Сохранить решение</button></div><p class="save-note" id="save-note"></p></div></div>`;
+  return `<div class="detail-head"><div><h2 class="detail-name">${escapeHtml(row["Фамилия / студенты"] || payload.case.source_name)}</h2><p class="detail-sub">${escapeHtml(row["Группа"])} · <a class="doc-link" href="${apiUrl(payload.document_url)}" target="_blank">Открыть исходный DOCX</a></p></div><div class="detail-score"><div class="big-grade-value">${grade == null ? "—" : `${approximate ? "≈ " : ""}${grade}`}</div><div class="big-grade">${escapeHtml(gradeLabel)}</div><div class="score-support">${escapeHtml(supportNote)}</div></div></div><div class="detail-body"><p class="section-label">Критерии и доказательства</p>${(result.results || []).map((criterion) => renderCriterion(criterion, criteriaMap[criterion.criterion_id])).join("")}<div class="review-box"><p class="section-label">${escapeHtml(decisionLabel)}</p>${(result.results || []).map((criterion) => renderDecision(criterion, criteriaMap[criterion.criterion_id], reviewDone)).join("")}${reviewDone ? "" : '<div class="detail-actions"><button class="button primary" id="save-review">Сохранить решение</button></div>'}<p class="save-note" id="save-note"></p></div></div>`;
 }
 
 function renderCriterion(criterion) {
@@ -143,7 +144,7 @@ function renderCriterion(criterion) {
 
 function renderDecision(criterion, meta, reviewDone) {
   const allowed = meta?.allowed_scores || [0, 1, 2, 3, 4, 5].filter((score) => score <= criterion.max_score);
-  const options = [];
+  const options = criterion.proposed_score == null ? ['<option value="" selected disabled>Выберите балл</option>'] : [];
   if (criterion.proposed_score != null) options.push(`<option value="confirm">Подтвердить ${criterion.proposed_score} балл.</option>`);
   allowed.forEach((score) => options.push(`<option value="score:${score}">Поставить ${score} балл.</option>`));
   return `<div class="decision-row"><label>${escapeHtml(criterion.title)}<br><span class="muted">Автоматически: ${criterion.proposed_score == null ? "нет балла" : `${criterion.proposed_score}/${criterion.max_score}`}</span></label><select class="decision-select" data-decision="${escapeHtml(criterion.criterion_id)}" ${reviewDone ? "disabled" : ""}>${options.join("")}</select></div>`;
@@ -231,7 +232,9 @@ async function pickPath(kind) {
 
 async function saveReview() {
   const decisions = {};
-  document.querySelectorAll("[data-decision]").forEach((select) => { const value = select.value; decisions[select.dataset.decision] = value === "confirm" ? { action: "confirm" } : { action: "set_score", score: Number(value.split(":")[1]) }; });
+  let missingScore = false;
+  document.querySelectorAll("[data-decision]").forEach((select) => { const value = select.value; if (!value) { missingScore = true; return; } decisions[select.dataset.decision] = value === "confirm" ? { action: "confirm" } : { action: "set_score", score: Number(value.split(":")[1]) }; });
+  if (missingScore) { showError(new Error("Выберите балл для каждого критерия, который требует решения.")); return; }
   try { const data = await api(`/api/runs/${state.activeRun.id}/students/${state.selectedIndex}/review`, { method: "POST", body: JSON.stringify({ decisions }) }); state.notice = data.summary.final_grade ? `Решение сохранено. Итоговая оценка: ${data.summary.final_grade}.` : "Решение сохранено, но часть критериев ещё требует решения."; await refreshRun(); await selectStudent(state.selectedIndex); } catch (error) { showError(error); }
 }
 

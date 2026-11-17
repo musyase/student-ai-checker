@@ -10,6 +10,7 @@ from http.server import ThreadingHTTPServer
 from student_ai_checker.config import Settings
 from student_ai_checker.local_app import LocalApp, create_handler
 import student_ai_checker.local_app as local_app_module
+from scripts.demo import create_demo
 
 
 def running_app(tmp_path: Path):
@@ -173,3 +174,36 @@ def test_stale_no_manifest_run_is_not_reported_as_pending(tmp_path):
     (output / "app-run.log").write_text("Cannot resume without manifest", encoding="utf-8")
     run = {"id": "stale", "output_root": str(output)}
     assert app.run_status(run) == "failed"
+
+
+def test_synthetic_demo_serves_a_reviewable_run(tmp_path):
+    state = create_demo(tmp_path / "demo")
+    app = LocalApp(
+        repo_root=Path(__file__).parents[1],
+        state_dir=state,
+        settings=Settings.from_env(),
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), create_handler(app))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, payload = request(server, "GET", "/api/runs")
+        runs = json.loads(payload)["runs"]
+        assert status == 200 and len(runs) == 1
+        assert runs[0]["demo"] is True and runs[0]["status"] == "completed"
+        status, payload = request(server, "GET", "/api/runs/synthetic-demo/roster")
+        rows = json.loads(payload)["rows"]
+        assert status == 200 and len(rows) == 3
+        assert sum(row["Статус"] == "Нужна проверка" for row in rows) == 1
+        status, payload = request(server, "GET", "/api/runs/synthetic-demo/students/2")
+        student = json.loads(payload)
+        assert status == 200
+        assert student["result"]["results"][1]["manual_review_required"] is True
+        assert student["result"]["resolved_evidence"][0]["id"] == "DOC1:P:0002"
+        status, payload = request(server, "POST", "/api/runs/synthetic-demo/students/2/review", {
+            "decisions": {"problem": {"action": "confirm"}, "steps": {"action": "set_score", "score": 1}}
+        })
+        assert status == 200 and json.loads(payload)["summary"]["final_total"] == 3
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
