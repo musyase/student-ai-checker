@@ -6,6 +6,8 @@ A local DOCX review app for teachers. It extracts text and images from coursewor
 
 The demo creates three fictional submissions and prepared results in a temporary directory. It opens the local interface, including a case that needs a teacher's decision. It does not call Ollama or measure grading accuracy. The interface and sample content are currently in Russian.
 
+![Synthetic teacher review in the local browser app](docs/review-workspace.jpg)
+
 Requires Python 3.11 or newer:
 
 ```bash

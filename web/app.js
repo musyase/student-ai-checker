@@ -45,8 +45,15 @@ function statusText(status) {
   return ({ running: "Проверка идёт", completed: "Проверка завершена", failed: "Ошибка", pending: "Ожидает запуска" })[status] || status;
 }
 
+function pluralRu(count, one, few, many) {
+  const lastTwo = count % 100;
+  if (lastTwo >= 11 && lastTwo <= 14) return many;
+  const last = count % 10;
+  return last === 1 ? one : last >= 2 && last <= 4 ? few : many;
+}
+
 function gradeText(row) {
-  if (row["Оценка"] == null) return "—";
+  if (row["Оценка"] == null) return "-";
   return `${row["Оценка примерная"] ? "≈ " : ""}${row["Оценка"]}`;
 }
 
@@ -60,13 +67,13 @@ function gradeForSummary(summary) {
 }
 
 function pointsText(row) {
-  const maximum = row["Макс. баллов"] ?? "—";
+  const maximum = row["Макс. баллов"] ?? "-";
   const noNumericResult = row["Итоговые баллы"] == null
     && row["Статус"] === "Нужна проверка"
     && Number(row["Известно баллов"] || 0) === 0;
-  if (noNumericResult) return `—/${maximum}`;
+  if (noNumericResult) return `-/${maximum}`;
   return row["Итоговые баллы"] == null
-    ? `${row["Известно баллов"] ?? "—"}/${maximum}`
+    ? `${row["Известно баллов"] ?? "-"}/${maximum}`
     : `${row["Итоговые баллы"]}/${maximum}`;
 }
 
@@ -75,13 +82,13 @@ function render() {
   const summary = run ? run : null;
   app.innerHTML = `
     <header class="app-header">
-      <div class="brand"><div class="brand-mark">SA</div><div><div class="brand-name">Student AI Checker</div><div class="brand-subtitle">локальное рабочее место преподавателя</div></div></div>
+      <div class="brand"><div><div class="brand-name">Student AI Checker</div><div class="brand-subtitle">локальное рабочее место преподавателя</div></div></div>
       <div class="header-actions">
         <div class="health"><span class="health-dot ${run?.demo || (state.health?.ollama && state.health?.model_available) ? "ok" : state.health ? "bad" : ""}"></span>${run?.demo ? "Синтетическое демо" : state.health ? (state.health.ollama ? (state.health.model_available ? "Ollama готова" : `Модель ${escapeHtml(state.health.model)} не найдена`) : "Ollama недоступна") : "Проверяем Ollama"}</div>
       </div>
     </header>
     <main class="app-shell">
-      <div class="page-intro"><div><p class="eyebrow">Панель проверки</p><h1>Разберите работы по порядку</h1><p class="intro-copy">Запустите проверку, отфильтруйте нужную группу и пройдите только те критерии, где системе не хватило подтверждений.</p></div>${run ? '<button class="button secondary" id="new-run">Новая проверка</button>' : ""}</div>
+      <div class="page-intro"><div><h1>${run ? "Проверка работ" : "Новая проверка работ"}</h1><p class="intro-copy">${run ? "Выберите работу, проверьте доказательства и сохраните решение по спорным критериям." : "Укажите папку с работами и файл задания, чтобы начать локальную проверку."}</p></div>${run ? '<button class="button secondary" id="new-run">Новая проверка</button>' : ""}</div>
       ${run?.demo ? '<div class="demo-notice">Демонстрационные данные: работы, доказательства и баллы придуманы для знакомства с интерфейсом. Ollama при подготовке демо не запускалась.</div>' : ""}
       ${state.error ? `<div class="form-error">${escapeHtml(state.error)}</div>` : ""}
       ${state.notice ? `<div class="notice">${escapeHtml(state.notice)}</div>` : ""}
@@ -105,7 +112,7 @@ function renderRun(run, summary) {
   });
   const done = Number(summary.completed_count || 0) + Number(summary.manual_review_count || 0) + Number(summary.failed_count || 0);
   const percent = summary.case_count ? Math.min(100, Math.round(done / summary.case_count * 100)) : 0;
-  return `<div class="run-strip"><div class="run-meta"><div class="run-title">${escapeHtml(run.profile || "Проверка")}</div><div class="run-path" title="${escapeHtml(run.folder)}">${escapeHtml(run.folder)}</div>${run.status === "running" ? `<div class="progress"><div class="progress-bar" style="width:${percent}%"></div></div>` : ""}</div><div class="run-actions"><span class="status-chip ${statusClass(run.status)}">${escapeHtml(statusText(run.status))}</span><button class="button ghost" id="refresh-run">Обновить</button></div></div><div class="export-bar"><span>Экспорт результатов</span><a class="button secondary" href="${apiUrl(`/api/runs/${run.id}/exports/teacher-roster.csv`)}" download>Реестр CSV</a><a class="button secondary" href="${apiUrl(`/api/runs/${run.id}/exports/groups-summary.csv`)}" download>По группам</a><a class="button secondary" href="${apiUrl(`/api/runs/${run.id}/exports/results.csv`)}" download>Все результаты</a></div><div class="metrics"><div class="metric"><div class="metric-label">Всего работ</div><div class="metric-value">${summary.case_count || 0}</div></div><div class="metric"><div class="metric-label">Готово</div><div class="metric-value">${summary.completed_count || 0}</div></div><div class="metric"><div class="metric-label">К проверке</div><div class="metric-value">${summary.manual_review_count || 0}</div></div><div class="metric"><div class="metric-label">Ошибки</div><div class="metric-value">${summary.failed_count || 0}</div></div></div><div class="workspace"><aside class="panel"><div class="panel-head"><h2>Группы</h2><p>${groups.length} групп</p></div><div class="group-list"><button class="group-button ${state.group === "all" ? "active" : ""}" data-group="all"><span>Все работы</span><span class="count">${state.rows.length}</span></button>${groups.map((group) => `<button class="group-button ${state.group === group ? "active" : ""}" data-group="${escapeHtml(group)}"><span>${escapeHtml(group)}</span><span class="count">${state.rows.filter((row) => row["Группа"] === group).length}</span></button>`).join("")}</div></aside><section class="panel"><div class="panel-head"><h2>Студенты</h2><p>${visible.length} в списке</p></div><div class="filter-row"><input class="filter-input" id="search" value="${escapeHtml(state.search)}" placeholder="Фамилия или группа" /><select class="filter-input" id="status"><option value="all" ${state.status === "all" ? "selected" : ""}>Все статусы</option><option value="review" ${state.status === "review" ? "selected" : ""}>Требуют проверки</option><option value="ready" ${state.status === "ready" ? "selected" : ""}>Готовые</option></select></div><div class="student-list">${visible.length ? visible.map(renderStudentRow).join("") : '<div class="empty">По выбранным фильтрам работ нет.</div>'}</div></section><section class="panel detail-panel">${state.selectedStudent ? renderDetail(state.selectedStudent) : '<div class="empty">Выберите студента слева, чтобы увидеть критерии, доказательства и решение преподавателя.</div>'}</section></div>`;
+  return `<div class="run-strip"><div class="run-meta"><div class="run-title">${escapeHtml(run.profile || "Проверка")}</div><div class="run-path" title="${escapeHtml(run.folder)}">${escapeHtml(run.folder)}</div>${run.status === "running" ? `<div class="progress"><div class="progress-bar" style="width:${percent}%"></div></div>` : ""}</div><div class="run-actions"><span class="status-chip ${statusClass(run.status)}">${escapeHtml(statusText(run.status))}</span><button class="button ghost" id="refresh-run">Обновить</button></div></div><div class="export-bar"><span>Экспорт результатов</span><a class="button secondary" href="${apiUrl(`/api/runs/${run.id}/exports/teacher-roster.csv`)}" download>Реестр CSV</a><a class="button secondary" href="${apiUrl(`/api/runs/${run.id}/exports/groups-summary.csv`)}" download>По группам</a><a class="button secondary" href="${apiUrl(`/api/runs/${run.id}/exports/results.csv`)}" download>Все результаты</a></div><div class="metrics"><div class="metric"><div class="metric-label">Всего работ</div><div class="metric-value">${summary.case_count || 0}</div></div><div class="metric"><div class="metric-label">Готово</div><div class="metric-value">${summary.completed_count || 0}</div></div><div class="metric"><div class="metric-label">К проверке</div><div class="metric-value">${summary.manual_review_count || 0}</div></div><div class="metric"><div class="metric-label">Ошибки</div><div class="metric-value">${summary.failed_count || 0}</div></div></div><div class="workspace"><aside class="panel"><div class="panel-head"><h2>Группы</h2><p>${groups.length} ${pluralRu(groups.length, "группа", "группы", "групп")}</p></div><div class="group-list"><button class="group-button ${state.group === "all" ? "active" : ""}" data-group="all"><span>Все работы</span><span class="count">${state.rows.length}</span></button>${groups.map((group) => `<button class="group-button ${state.group === group ? "active" : ""}" data-group="${escapeHtml(group)}"><span>${escapeHtml(group)}</span><span class="count">${state.rows.filter((row) => row["Группа"] === group).length}</span></button>`).join("")}</div></aside><section class="panel"><div class="panel-head"><h2>Студенты</h2><p>${visible.length} в списке</p></div><div class="filter-row"><input class="filter-input" id="search" value="${escapeHtml(state.search)}" placeholder="Фамилия или группа" /><select class="filter-input" id="status"><option value="all" ${state.status === "all" ? "selected" : ""}>Все статусы</option><option value="review" ${state.status === "review" ? "selected" : ""}>Требуют проверки</option><option value="ready" ${state.status === "ready" ? "selected" : ""}>Готовые</option></select></div><div class="student-list">${visible.length ? visible.map(renderStudentRow).join("") : '<div class="empty">По выбранным фильтрам работ нет.</div>'}</div></section><section class="panel detail-panel">${state.selectedStudent ? renderDetail(state.selectedStudent) : '<div class="empty">Выберите студента слева, чтобы увидеть критерии, доказательства и решение преподавателя.</div>'}</section></div>`;
 }
 
 function renderStudentRow(row) {
@@ -132,14 +139,14 @@ function renderDetail(payload) {
     && Number(summary.scored_points || 0) === 0;
   const points = noNumericResult ? null : (total ?? summary.scored_points);
   const gradeLabel = reviewDone ? `${decisionLabel}: ${grade}` : (grade ? `${approximate ? "Примерная оценка" : "Предварительная оценка"}: ${grade}` : "Оценка пока не определена");
-  const support = `${points ?? "—"}/${summary.max_score ?? payload.case.max_score ?? "—"} баллов`;
-  const supportNote = noNumericResult ? "Баллы не определены — это не ноль." : support;
-  return `<div class="detail-head"><div><h2 class="detail-name">${escapeHtml(row["Фамилия / студенты"] || payload.case.source_name)}</h2><p class="detail-sub">${escapeHtml(row["Группа"])} · <a class="doc-link" href="${apiUrl(payload.document_url)}" target="_blank">Открыть исходный DOCX</a></p></div><div class="detail-score"><div class="big-grade-value">${grade == null ? "—" : `${approximate ? "≈ " : ""}${grade}`}</div><div class="big-grade">${escapeHtml(gradeLabel)}</div><div class="score-support">${escapeHtml(supportNote)}</div></div></div><div class="detail-body"><p class="section-label">Критерии и доказательства</p>${(result.results || []).map((criterion) => renderCriterion(criterion, criteriaMap[criterion.criterion_id])).join("")}<div class="review-box"><p class="section-label">${escapeHtml(decisionLabel)}</p>${(result.results || []).map((criterion) => renderDecision(criterion, criteriaMap[criterion.criterion_id], reviewDone)).join("")}${reviewDone ? "" : '<div class="detail-actions"><button class="button primary" id="save-review">Сохранить решение</button></div>'}<p class="save-note" id="save-note"></p></div></div>`;
+  const support = `${points ?? "-"}/${summary.max_score ?? payload.case.max_score ?? "-"} баллов`;
+  const supportNote = noNumericResult ? "Баллы не определены; это не ноль." : support;
+  return `<div class="detail-head"><div><h2 class="detail-name">${escapeHtml(row["Фамилия / студенты"] || payload.case.source_name)}</h2><p class="detail-sub">${escapeHtml(row["Группа"])} · <a class="doc-link" href="${apiUrl(payload.document_url)}" target="_blank">Открыть исходный DOCX</a></p></div><div class="detail-score"><div class="big-grade-value">${grade == null ? "-" : `${approximate ? "≈ " : ""}${grade}`}</div><div class="big-grade">${escapeHtml(gradeLabel)}</div><div class="score-support">${escapeHtml(supportNote)}</div></div></div><div class="detail-body"><p class="section-label">Критерии и доказательства</p>${(result.results || []).map((criterion) => renderCriterion(criterion, criteriaMap[criterion.criterion_id])).join("")}<div class="review-box"><p class="section-label">${escapeHtml(decisionLabel)}</p>${(result.results || []).map((criterion) => renderDecision(criterion, criteriaMap[criterion.criterion_id], reviewDone)).join("")}${reviewDone ? "" : '<div class="detail-actions"><button class="button primary" id="save-review">Сохранить решение</button></div>'}<p class="save-note" id="save-note"></p></div></div>`;
 }
 
 function renderCriterion(criterion) {
   const evidence = (state.selectedStudent.result?.resolved_evidence || []).filter((item) => (criterion.evidence_ids || []).includes(item.id));
-  return `<article class="criterion"><div class="criterion-top"><div class="criterion-title">${escapeHtml(criterion.title)}</div><div class="criterion-score">${criterion.proposed_score == null ? "—" : `${criterion.proposed_score}/${criterion.max_score}`}</div></div><div class="criterion-meta">${escapeHtml(criterion.status_label_ru || criterion.status)} · ${escapeHtml(criterion.explanation || "")}</div>${criterion.manual_review_required ? `<div class="criterion-reason">${escapeHtml(criterion.manual_review_reason || "Требуется проверка преподавателя.")}</div>` : ""}${evidence.length ? `<div class="evidence-list">${evidence.map((item) => `<div class="evidence"><div class="evidence-id">${escapeHtml(item.id)} · ${escapeHtml(item.kind)}</div>${escapeHtml(item.text || "Изображение или техническое доказательство")}</div>`).join("")}</div>` : ""}</article>`;
+  return `<article class="criterion"><div class="criterion-top"><div class="criterion-title">${escapeHtml(criterion.title)}</div><div class="criterion-score">${criterion.proposed_score == null ? "-" : `${criterion.proposed_score}/${criterion.max_score}`}</div></div><div class="criterion-meta">${escapeHtml(criterion.status_label_ru || criterion.status)} · ${escapeHtml(criterion.explanation || "")}</div>${criterion.manual_review_required ? `<div class="criterion-reason">${escapeHtml(criterion.manual_review_reason || "Требуется проверка преподавателя.")}</div>` : ""}${evidence.length ? `<div class="evidence-list">${evidence.map((item) => `<div class="evidence"><div class="evidence-id">${escapeHtml(item.id)} · ${escapeHtml(item.kind)}</div>${escapeHtml(item.text || "Изображение или техническое доказательство")}</div>`).join("")}</div>` : ""}</article>`;
 }
 
 function renderDecision(criterion, meta, reviewDone) {
@@ -201,6 +208,10 @@ async function refreshRun() {
   const roster = await api(`/api/runs/${state.activeRun.id}/roster`);
   state.rows = roster.rows || [];
   if (state.selectedIndex != null) await selectStudent(state.selectedIndex, false);
+  else if (state.rows.length) {
+    const firstReview = state.rows.find((row) => row["Статус"] === "Нужна проверка");
+    await selectStudent((firstReview || state.rows[0])["Индекс"], false);
+  }
   render();
 }
 
