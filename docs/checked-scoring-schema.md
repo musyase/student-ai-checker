@@ -20,10 +20,10 @@ Failed to initialize samplers: failed to parse grammar
 
 `components_schema()` передавала всю Pydantic-схему, включая `maxLength: 6000`
 у цитаты и `maxLength: 2000` у объяснения, внутри вложенных ограниченных массивов.
-Большие ограниченные повторения при преобразовании JSON Schema в грамматику —
+Большие ограниченные повторения при преобразовании JSON Schema в грамматику -
 известный источник аналогичного отказа в llama.cpp (источники ниже).
 Лог пользователя не указывает точный путь проблемного ограничения; внутренний
-парсер его сборки здесь не запущен. Связь с конкретными двумя `maxLength` —
+парсер его сборки здесь не запущен. Связь с конкретными двумя `maxLength` -
 обоснованная гипотеза совместимости, которую должен подтвердить повторный запрос.
 
 ## Изменение строго ограничено
@@ -102,10 +102,10 @@ JSON Schema-валидатором. Это не проверка компиля�
 
 ## Первичные источники
 
-- https://docs.ollama.com/capabilities/structured-outputs — схема в `format` и
+- https://docs.ollama.com/capabilities/structured-outputs - схема в `format` и
   отдельная локальная проверка ответа.
-- https://github.com/ggml-org/llama.cpp/issues/26596 — сообщение об аналогичном
+- https://github.com/ggml-org/llama.cpp/issues/26596 - сообщение об аналогичном
   `failed to parse grammar` для больших `maxLength` в составной схеме; это
   сообщение о воспроизведении на другой сборке, не лог компьютера пользователя.
-- https://github.com/ggml-org/llama.cpp/issues/25923 — ограничения повторений
+- https://github.com/ggml-org/llama.cpp/issues/25923 - ограничения повторений
   при преобразовании длин строк из JSON Schema в GBNF.
